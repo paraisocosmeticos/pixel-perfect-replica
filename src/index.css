@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #1a3a2a;
+  --color-gold: #b8973a;
+  --color-secondary: #2d5a3d;
+  --color-background: #faf7f0;
+  --color-foreground: #2d2d2d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: #faf7f0;
+  color: #2d2d2d;
+  font-family: system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100vh;
+}
