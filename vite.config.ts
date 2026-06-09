@@ -12,4 +12,9 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  nitro: {
+    // Use Vercel's Build Output API v3 — outputs to .vercel/output/ which Vercel
+    // picks up automatically, wiring the SSR function and static assets correctly.
+    preset: "vercel",
+  },
 });
