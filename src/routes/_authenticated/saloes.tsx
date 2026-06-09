@@ -48,8 +48,8 @@ import {
   MapPin,
   Phone,
   User,
-  CheckCircle2,
-  Seedling,
+  CheckCircle,
+  Leaf,
 } from "lucide-react";
 import type { Tables } from "@/integrations/supabase/types";
 
@@ -909,7 +909,7 @@ function SaloesPage() {
       {!isLoading && saloes.length === 0 && (
         <Card className="p-6 border-dashed">
           <div className="flex flex-col items-center gap-3 text-center">
-            <Seedling className="h-10 w-10 text-muted-foreground" />
+            <Leaf className="h-10 w-10 text-muted-foreground" />
             <div>
               <p className="font-medium">Nenhum salão ainda</p>
               <p className="text-sm text-muted-foreground mt-1">
@@ -922,7 +922,7 @@ function SaloesPage() {
               disabled={seedMutation.isPending}
               className="bg-accent text-accent-foreground hover:bg-accent/90"
             >
-              <Seedling className="h-4 w-4 mr-2" />
+              <Leaf className="h-4 w-4 mr-2" />
               {seedMutation.isPending ? "A criar…" : "Criar salões iniciais"}
             </Button>
           </div>
