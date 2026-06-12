@@ -14,16 +14,17 @@ async function fetchCurrentUser(): Promise<CurrentUser | null> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return null;
 
-  const [{ data: profile }, { data: adminRole }] = await Promise.all([
+  const [{ data: profile }, { data: roles, error: rolesError }] = await Promise.all([
     supabase.from("profiles").select("nome,email").eq("id", session.user.id).maybeSingle(),
     supabase
       .from("user_roles")
       .select("role")
-      .eq("user_id", session.user.id)
-      .eq("role", "admin")
-      .maybeSingle(),
+      .eq("user_id", session.user.id),
   ]);
-  const role = (adminRole ? "admin" : "representante") as "admin" | "representante";
+  console.log('USER ID:', session.user.id);
+  console.log('ROLES DATA:', JSON.stringify(roles));
+  console.log('ROLE ERROR:', rolesError);
+  const role = (roles?.some((r) => r.role === "admin") ? "admin" : "representante") as "admin" | "representante";
   return {
     id: session.user.id,
     email: profile?.email ?? session.user.email ?? "",
