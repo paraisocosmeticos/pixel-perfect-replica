@@ -44,15 +44,13 @@ function AuthPage() {
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    // Limpar sessão antiga antes de fazer login
-    await supabase.auth.signOut();
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
     if (error) {
       toast.error("Não foi possível entrar", { description: error.message });
       return;
     }
-    toast.success("Bem-vinda de volta!");
+    toast.success("Bem-vindo de volta!");
   }
 
   async function handleSignup(e: React.FormEvent) {
