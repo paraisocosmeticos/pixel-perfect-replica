@@ -32,6 +32,7 @@ async function fetchCurrentUser(): Promise<CurrentUser | null> {
   }
 
   const role = (roles.some((r) => r.role === "admin") ? "admin" : "representante") as "admin" | "representante";
+  console.log('FETCH ROLE RESULT:', role, roles);
   return {
     id: session.user.id,
     email: profile?.email ?? session.user.email ?? "",
@@ -41,7 +42,12 @@ async function fetchCurrentUser(): Promise<CurrentUser | null> {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { data: user } = useQuery({ queryKey: ["current-user"], queryFn: fetchCurrentUser });
+  const { data: user } = useQuery({
+    queryKey: ["current-user"],
+    queryFn: fetchCurrentUser,
+    staleTime: 0,
+    gcTime: 0,
+  });
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
