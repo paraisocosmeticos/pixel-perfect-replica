@@ -24,7 +24,14 @@ async function fetchCurrentUser(): Promise<CurrentUser | null> {
   console.log('USER ID:', session.user.id);
   console.log('ROLES DATA:', JSON.stringify(roles));
   console.log('ROLE ERROR:', rolesError);
-  const role = (roles?.some((r) => r.role === "admin") ? "admin" : "representante") as "admin" | "representante";
+
+  if (!roles || roles.length === 0) {
+    await supabase.auth.signOut();
+    window.location.href = '/auth';
+    return null;
+  }
+
+  const role = (roles.some((r) => r.role === "admin") ? "admin" : "representante") as "admin" | "representante";
   return {
     id: session.user.id,
     email: profile?.email ?? session.user.email ?? "",
