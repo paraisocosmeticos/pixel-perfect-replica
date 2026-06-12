@@ -1,325 +1,155 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
-import { toast } from "sonner";
+import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Store,
-  AlertTriangle,
-  Coins,
-  ArrowRightLeft,
-  Plus,
-  CalendarDays,
-  MapPin,
-  Phone,
-  User,
-  CheckCircle,
-  Leaf,
-} from "lucide-react";
-import type { Tables } from "@/integrations/supabase/types";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Store, AlertTriangle, Banknote, Coins, Plus, MapPin, Phone, User, Calendar } from "lucide-react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/saloes")({
-  head: () => ({
-    meta: [
-      { title: "Salões — Secrets VIP" },
-      { name: "description", content: "Gestão de salões parceiros e visitas." },
-    ],
-  }),
+  head: () => ({ meta: [{ title: "Salões — Secrets VIP" }] }),
   component: SaloesPage,
 });
 
-type Salon = Tables<"salons">;
-type Profile = Tables<"profiles">;
-
-type SalonCard = {
+type Salon = {
   id: string;
   nome: string;
+  ativo: boolean;
   morada: string | null;
   telefone: string | null;
   contacto_nome: string | null;
   representante_id: string | null;
-  representante_nome: string | null;
   data_inicio_parceria: string | null;
-  ultima_visita: string | null;
-  ativo: boolean;
+  nota_interna: string | null;
 };
 
-type SalonDetail = {
-  stock_unidades: number;
-  vendas_mes: number;
-  comissao_pendente: number;
-  ultima_visita: string | null;
-};
-
-const VISIT_ALERT_DAYS = 15;
-const SEED_SALONS = [
-  { nome: "Made in Brasil" },
-  { nome: "Brooklyn Barber Studio" },
-  { nome: "Andrade Hair" },
-  { nome: "Kesia Nails" },
-];
+type Rep = { id: string; nome: string };
+type Visit = { id: string; data: string; notas: string | null; representante_id: string };
+type Transfer = { id: string; data: string; quantidade: number; nota: string | null; produto_id: string };
+type SalonSale = { id: string; data: string; preco_final: number; quantidade: number; comissao_salao: number; produto_id: string };
+type Return = { id: string; data: string; quantidade: number; motivo: string | null; produto_id: string };
 
 function eur(v: number) {
   return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(v);
 }
 
-function fmtDate(iso: string) {
-  return new Date(iso + "T00:00:00").toLocaleDateString("pt-PT");
+function fmtDate(s: string | null) {
+  if (!s) return "—";
+  return new Date(s).toLocaleDateString("pt-PT");
 }
 
-function today() {
-  return new Date().toISOString().slice(0, 10);
+function daysSince(dateStr: string | null) {
+  if (!dateStr) return null;
+  return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
 }
 
-function monthStart() {
-  const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
+function VisitBadge({ lastVisit }: { lastVisit: string | null }) {
+  const days = daysSince(lastVisit);
+  if (days === null) return <Badge variant="secondary">Sem visita</Badge>;
+  if (days > 15) return <Badge className="bg-red-600 text-white hover:bg-red-600">Visita em atraso</Badge>;
+  return <Badge className="bg-green-600 text-white hover:bg-green-600">Em dia</Badge>;
 }
 
-function daysSince(iso: string | null): number | null {
-  if (!iso) return null;
-  const diff = Date.now() - new Date(iso + "T00:00:00").getTime();
-  return Math.floor(diff / (1000 * 60 * 60 * 24));
-}
+async function fetchSaloesData() {
+  const monthStart = new Date(new Date().setDate(1)).toISOString().slice(0, 10);
+  const alert15 = new Date(Date.now() - 15 * 86400000).toISOString().slice(0, 10);
 
-// ─── Fetchers ─────────────────────────────────────────────────────────────────
-
-async function fetchSaloes(): Promise<SalonCard[]> {
   const [
-    { data: salons, error: sErr },
-    { data: visits, error: vErr },
+    { data: salons },
+    { data: reps },
+    { data: visits },
+    { data: transfers },
+    { data: sales },
+    { data: products },
   ] = await Promise.all([
-    supabase
-      .from("salons")
-      .select("id, nome, morada, telefone, contacto_nome, representante_id, data_inicio_parceria, ativo, profiles(nome)")
-      .eq("ativo", true)
-      .order("nome"),
-    supabase
-      .from("salon_visit_log")
-      .select("salon_id, data")
-      .order("data", { ascending: false }),
+    supabase.from("salons").select("*").order("nome"),
+    supabase.from("user_roles").select("user_id,role").eq("role", "representante"),
+    supabase.from("salon_visit_log").select("*").order("data", { ascending: false }),
+    supabase.from("transfers").select("*").gte("data", monthStart),
+    supabase.from("salon_sales").select("*").order("data", { ascending: false }),
+    supabase.from("products").select("id,nome"),
   ]);
-  if (sErr) throw sErr;
-  if (vErr) throw vErr;
 
-  // latest visit per salon
-  const latestVisit = new Map<string, string>();
+  // fetch profiles for reps
+  const repIds = (reps ?? []).map((r: any) => r.user_id);
+  const { data: profiles } = repIds.length
+    ? await supabase.from("profiles").select("id,nome").in("id", repIds)
+    : { data: [] };
+
+  const repList: Rep[] = (profiles ?? []).map((p: any) => ({ id: p.id, nome: p.nome }));
+  const repMap = new Map(repList.map((r) => [r.id, r.nome]));
+  const prodMap = new Map((products ?? []).map((p: any) => [p.id, p.nome]));
+
+  // last visit per salon
+  const lastVisitMap = new Map<string, string>();
   for (const v of visits ?? []) {
-    if (!latestVisit.has(v.salon_id)) latestVisit.set(v.salon_id, v.data);
+    if (!lastVisitMap.has(v.salon_id)) lastVisitMap.set(v.salon_id, v.data);
   }
 
-  return (salons ?? []).map((s: any) => ({
-    id: s.id,
-    nome: s.nome,
-    morada: s.morada,
-    telefone: s.telefone,
-    contacto_nome: s.contacto_nome,
-    representante_id: s.representante_id,
-    representante_nome: s.profiles?.nome ?? null,
-    data_inicio_parceria: s.data_inicio_parceria,
-    ultima_visita: latestVisit.get(s.id) ?? null,
-    ativo: s.ativo,
-  }));
-}
+  const activeSalons = (salons ?? []).filter((s: Salon) => s.ativo);
+  const lateCount = activeSalons.filter((s: Salon) => {
+    const lv = lastVisitMap.get(s.id) ?? null;
+    return !lv || lv < alert15;
+  }).length;
 
-async function fetchKpiExtras() {
-  const ms = monthStart();
-  const [
-    { data: transfers, error: tErr },
-    { data: commissions, error: cErr },
-  ] = await Promise.all([
-    supabase
-      .from("transfers")
-      .select("quantidade, products(preco_custo)")
-      .gte("data", ms),
-    supabase
-      .from("commission_payments")
-      .select("valor")
-      .eq("destinatario_tipo", "salao")
-      .eq("status", "pendente"),
-  ]);
-  if (tErr) throw tErr;
-  if (cErr) throw cErr;
+  const totalTransfers = (transfers ?? []).reduce((sum: number, t: any) => sum + 0, 0); // EUR unknown without price
+  const transfersEur = 0; // transfers don't have price; show count instead
 
-  const transfersEur = (transfers ?? []).reduce((s: number, t: any) => {
-    return s + t.quantidade * Number(t.products?.preco_custo ?? 0);
-  }, 0);
-
-  const comissoesPendentes = (commissions ?? []).reduce(
-    (s, c) => s + Number(c.valor),
-    0
-  );
-
-  return { transfersEur, comissoesPendentes };
-}
-
-async function fetchReps(): Promise<Pick<Profile, "id" | "nome">[]> {
-  const { data, error } = await supabase
-    .from("user_roles")
-    .select("user_id, profiles(id, nome)")
-    .eq("role", "representante");
-  if (error) throw error;
-  return (data ?? [])
-    .map((r: any) => r.profiles)
-    .filter(Boolean) as Pick<Profile, "id" | "nome">[];
-}
-
-async function fetchSalonDetail(salonId: string): Promise<SalonDetail> {
-  const ms = monthStart();
-  const [
-    { data: trf, error: tErr },
-    { data: ret, error: rErr },
-    { data: sales, error: sErr },
-    { data: commissions, error: cErr },
-    { data: visits, error: vErr },
-  ] = await Promise.all([
-    supabase.from("transfers").select("quantidade").eq("salon_id", salonId),
-    supabase.from("returns").select("quantidade").eq("salon_id", salonId),
-    supabase
-      .from("salon_sales")
-      .select("preco_final")
-      .eq("salon_id", salonId)
-      .gte("data", ms),
-    supabase
-      .from("commission_payments")
-      .select("valor")
-      .eq("destinatario_id", salonId)
-      .eq("destinatario_tipo", "salao")
-      .eq("status", "pendente"),
-    supabase
-      .from("salon_visit_log")
-      .select("data")
-      .eq("salon_id", salonId)
-      .order("data", { ascending: false })
-      .limit(1),
-  ]);
-  if (tErr) throw tErr;
-  if (rErr) throw rErr;
-  if (sErr) throw sErr;
-  if (cErr) throw cErr;
-  if (vErr) throw vErr;
-
-  const stockUnidades =
-    (trf ?? []).reduce((s, t) => s + t.quantidade, 0) -
-    (ret ?? []).reduce((s, r) => s + r.quantidade, 0);
-
-  const vendasMes = (sales ?? []).reduce((s, v) => s + Number(v.preco_final), 0);
-  const comissaoPendente = (commissions ?? []).reduce((s, c) => s + Number(c.valor), 0);
-  const ultimaVisita = visits?.[0]?.data ?? null;
+  const pendingCommissions = (sales ?? [])
+    .filter((s: any) => !s.comissao_paga)
+    .reduce((sum: number, s: any) => sum + Number(s.comissao_salao ?? 0), 0);
 
   return {
-    stock_unidades: Math.max(0, stockUnidades),
-    vendas_mes: vendasMes,
-    comissao_pendente: comissaoPendente,
-    ultima_visita: ultimaVisita,
+    salons: (salons ?? []) as Salon[],
+    repList,
+    repMap,
+    prodMap,
+    visits: (visits ?? []) as (Visit & { salon_id: string })[],
+    transfers: (transfers ?? []) as (Transfer & { salon_id: string })[],
+    sales: (sales ?? []) as (SalonSale & { salon_id: string })[],
+    lastVisitMap,
+    lateCount,
+    pendingCommissions,
+    monthStart,
   };
 }
 
-async function fetchSalonTabs(salonId: string) {
-  const [
-    { data: transfers, error: tErr },
-    { data: sales, error: sErr },
-    { data: returns, error: rErr },
-    { data: visits, error: vErr },
-  ] = await Promise.all([
-    supabase
-      .from("transfers")
-      .select("id, data, quantidade, nota, products(nome)")
-      .eq("salon_id", salonId)
-      .order("data", { ascending: false }),
-    supabase
-      .from("salon_sales")
-      .select("id, data, quantidade, preco_final, comissao_salao, cliente_nome, products(nome)")
-      .eq("salon_id", salonId)
-      .order("data", { ascending: false }),
-    supabase
-      .from("returns")
-      .select("id, data, quantidade, motivo, products(nome)")
-      .eq("salon_id", salonId)
-      .order("data", { ascending: false }),
-    supabase
-      .from("salon_visit_log")
-      .select("id, data, notas, profiles(nome)")
-      .eq("salon_id", salonId)
-      .order("data", { ascending: false }),
-  ]);
-  if (tErr) throw tErr;
-  if (sErr) throw sErr;
-  if (rErr) throw rErr;
-  if (vErr) throw vErr;
-
-  return {
-    transfers: (transfers ?? []) as any[],
-    sales: (sales ?? []) as any[],
-    returns: (returns ?? []) as any[],
-    visits: (visits ?? []) as any[],
-  };
-}
-
-// ─── Visit Modal ──────────────────────────────────────────────────────────────
-
+// ── Visit Modal ───────────────────────────────────────────────────────────────
 function VisitModal({
   open,
   onClose,
   salonId,
-  salonNome,
 }: {
   open: boolean;
   onClose: () => void;
   salonId: string;
-  salonNome: string;
 }) {
   const qc = useQueryClient();
-  const [data, setData] = useState(today());
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
   const [notas, setNotas] = useState("");
+  const [repId, setRepId] = useState("");
+  const { data: saloesData } = useQuery({ queryKey: ["saloes"], queryFn: fetchSaloesData });
 
-  async function getCurrentUserId() {
-    const { data: { user } } = await supabase.auth.getUser();
-    return user?.id ?? null;
-  }
+  useEffect(() => {
+    if (open) { setData(new Date().toISOString().slice(0, 10)); setNotas(""); setRepId(""); }
+  }, [open]);
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const userId = await getCurrentUserId();
-      if (!userId) throw new Error("Utilizador não autenticado.");
+      const { data: { session } } = await supabase.auth.getSession();
       const { error } = await supabase.from("salon_visit_log").insert({
         salon_id: salonId,
-        representante_id: userId,
+        representante_id: repId || session?.user?.id,
         data,
         notas: notas.trim() || null,
       });
@@ -327,145 +157,94 @@ function VisitModal({
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["saloes"] });
-      qc.invalidateQueries({ queryKey: ["salon-detail", salonId] });
-      qc.invalidateQueries({ queryKey: ["salon-tabs", salonId] });
       toast.success("Visita registada.");
-      setData(today());
-      setNotas("");
       onClose();
     },
-    onError: (e: any) => toast.error(e.message ?? "Erro ao registar visita."),
+    onError: (e: any) => toast.error("Erro", { description: e.message }),
   });
+
+  const reps = saloesData?.repList ?? [];
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="font-display">Registar Visita</DialogTitle>
-        </DialogHeader>
-        <form
-          onSubmit={(e) => { e.preventDefault(); mutation.mutate(); }}
-          className="space-y-4 mt-2"
-        >
-          <p className="text-sm text-muted-foreground">{salonNome}</p>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Registar Visita</DialogTitle></DialogHeader>
+        <div className="space-y-4 py-2">
           <div className="space-y-1">
-            <Label htmlFor="visit-data">Data *</Label>
-            <Input
-              id="visit-data"
-              type="date"
-              value={data}
-              onChange={(e) => setData(e.target.value)}
-            />
+            <Label>Representante</Label>
+            <Select value={repId} onValueChange={setRepId}>
+              <SelectTrigger><SelectValue placeholder="Seleccionar…" /></SelectTrigger>
+              <SelectContent>
+                {reps.map((r) => <SelectItem key={r.id} value={r.id}>{r.nome}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
           <div className="space-y-1">
-            <Label htmlFor="visit-notas">Notas</Label>
-            <Textarea
-              id="visit-notas"
-              rows={3}
-              value={notas}
-              onChange={(e) => setNotas(e.target.value)}
-              placeholder="Observações da visita…"
-            />
+            <Label>Data</Label>
+            <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
           </div>
-          <DialogFooter className="gap-2">
-            <Button type="button" variant="outline" onClick={onClose} disabled={mutation.isPending}>
-              Cancelar
-            </Button>
-            <Button
-              type="submit"
-              disabled={mutation.isPending}
-              className="bg-accent text-accent-foreground hover:bg-accent/90"
-            >
-              {mutation.isPending ? "A guardar…" : "Registar Visita"}
-            </Button>
-          </DialogFooter>
-        </form>
+          <div className="space-y-1">
+            <Label>Notas</Label>
+            <Textarea value={notas} onChange={(e) => setNotas(e.target.value)} rows={3} placeholder="Observações da visita…" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button className="bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+            {mutation.isPending ? "A guardar…" : "Guardar"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-// ─── Novo Salão Modal ─────────────────────────────────────────────────────────
-
-type SalonForm = {
-  nome: string;
-  morada: string;
-  telefone: string;
-  contacto_nome: string;
-  representante_id: string;
-  data_inicio_parceria: string;
-};
-
-const BLANK_SALON: SalonForm = {
-  nome: "",
-  morada: "",
-  telefone: "",
-  contacto_nome: "",
-  representante_id: "",
-  data_inicio_parceria: today(),
-};
-
+// ── Salon Modal (create/edit) ─────────────────────────────────────────────────
 function SalonModal({
   open,
   onClose,
-  initial,
+  salon,
   reps,
 }: {
   open: boolean;
   onClose: () => void;
-  initial: SalonCard | null;
-  reps: Pick<Profile, "id" | "nome">[];
+  salon: Salon | null;
+  reps: Rep[];
 }) {
   const qc = useQueryClient();
-  const isEdit = initial !== null;
+  const [nome, setNome] = useState("");
+  const [morada, setMorada] = useState("");
+  const [telefone, setTelefone] = useState("");
+  const [contacto, setContacto] = useState("");
+  const [repId, setRepId] = useState("");
+  const [dataInicio, setDataInicio] = useState(new Date().toISOString().slice(0, 10));
 
-  const [form, setForm] = useState<SalonForm>(() =>
-    initial
-      ? {
-          nome: initial.nome,
-          morada: initial.morada ?? "",
-          telefone: initial.telefone ?? "",
-          contacto_nome: initial.contacto_nome ?? "",
-          representante_id: initial.representante_id ?? "",
-          data_inicio_parceria: initial.data_inicio_parceria ?? today(),
-        }
-      : { ...BLANK_SALON }
-  );
-
-  const [lastId, setLastId] = useState<string | null>(initial?.id ?? null);
-  if ((initial?.id ?? null) !== lastId) {
-    setLastId(initial?.id ?? null);
-    setForm(
-      initial
-        ? {
-            nome: initial.nome,
-            morada: initial.morada ?? "",
-            telefone: initial.telefone ?? "",
-            contacto_nome: initial.contacto_nome ?? "",
-            representante_id: initial.representante_id ?? "",
-            data_inicio_parceria: initial.data_inicio_parceria ?? today(),
-          }
-        : { ...BLANK_SALON }
-    );
-  }
-
-  function set<K extends keyof SalonForm>(k: K, v: string) {
-    setForm((p) => ({ ...p, [k]: v }));
-  }
+  useEffect(() => {
+    if (salon) {
+      setNome(salon.nome);
+      setMorada(salon.morada ?? "");
+      setTelefone(salon.telefone ?? "");
+      setContacto(salon.contacto_nome ?? "");
+      setRepId(salon.representante_id ?? "");
+      setDataInicio(salon.data_inicio_parceria ?? new Date().toISOString().slice(0, 10));
+    } else {
+      setNome(""); setMorada(""); setTelefone(""); setContacto(""); setRepId("");
+      setDataInicio(new Date().toISOString().slice(0, 10));
+    }
+  }, [salon, open]);
 
   const mutation = useMutation({
-    mutationFn: async (f: SalonForm) => {
-      if (!f.nome.trim()) throw new Error("O nome do salão é obrigatório.");
+    mutationFn: async () => {
       const payload = {
-        nome: f.nome.trim(),
-        morada: f.morada.trim() || null,
-        telefone: f.telefone.trim() || null,
-        contacto_nome: f.contacto_nome.trim() || null,
-        representante_id: f.representante_id || null,
-        data_inicio_parceria: f.data_inicio_parceria || null,
+        nome: nome.trim(),
+        morada: morada.trim() || null,
+        telefone: telefone.trim() || null,
+        contacto_nome: contacto.trim() || null,
+        representante_id: repId || null,
+        data_inicio_parceria: dataInicio || null,
       };
-      if (isEdit) {
-        const { error } = await supabase.from("salons").update(payload).eq("id", initial!.id);
+      if (salon) {
+        const { error } = await supabase.from("salons").update(payload).eq("id", salon.id);
         if (error) throw error;
       } else {
         const { error } = await supabase.from("salons").insert({ ...payload, ativo: true });
@@ -474,201 +253,151 @@ function SalonModal({
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["saloes"] });
-      toast.success(isEdit ? "Salão actualizado." : "Salão criado.");
+      toast.success(salon ? "Salão actualizado." : "Salão criado.");
       onClose();
     },
-    onError: (e: any) => toast.error(e.message ?? "Erro ao guardar salão."),
+    onError: (e: any) => toast.error("Erro", { description: e.message }),
   });
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="font-display">{isEdit ? "Editar Salão" : "Novo Salão"}</DialogTitle>
-        </DialogHeader>
-        <form
-          onSubmit={(e) => { e.preventDefault(); mutation.mutate(form); }}
-          className="space-y-4 mt-2"
-        >
+        <DialogHeader><DialogTitle>{salon ? "Editar Salão" : "Novo Salão"}</DialogTitle></DialogHeader>
+        <div className="space-y-4 py-2">
           <div className="space-y-1">
-            <Label htmlFor="s-nome">Nome *</Label>
-            <Input id="s-nome" value={form.nome} onChange={(e) => set("nome", e.target.value)} placeholder="ex. Made in Brasil" />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <Label htmlFor="s-contacto">Contacto</Label>
-              <Input id="s-contacto" value={form.contacto_nome} onChange={(e) => set("contacto_nome", e.target.value)} placeholder="Nome do responsável" />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="s-tel">Telefone</Label>
-              <Input id="s-tel" value={form.telefone} onChange={(e) => set("telefone", e.target.value)} placeholder="+351 9xx xxx xxx" />
-            </div>
+            <Label>Nome</Label>
+            <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome do salão" />
           </div>
           <div className="space-y-1">
-            <Label htmlFor="s-morada">Morada</Label>
-            <Input id="s-morada" value={form.morada} onChange={(e) => set("morada", e.target.value)} placeholder="Rua, cidade" />
+            <Label>Morada</Label>
+            <Input value={morada} onChange={(e) => setMorada(e.target.value)} placeholder="Rua, nº, cidade" />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label>Representante</Label>
-              <Select value={form.representante_id} onValueChange={(v) => set("representante_id", v)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Nenhum" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Nenhum</SelectItem>
-                  {reps.map((r) => (
-                    <SelectItem key={r.id} value={r.id}>{r.nome}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>Telefone</Label>
+              <Input value={telefone} onChange={(e) => setTelefone(e.target.value)} placeholder="+351 9XX XXX XXX" />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="s-parceria">Início de Parceria</Label>
-              <Input id="s-parceria" type="date" value={form.data_inicio_parceria} onChange={(e) => set("data_inicio_parceria", e.target.value)} />
+              <Label>Contacto</Label>
+              <Input value={contacto} onChange={(e) => setContacto(e.target.value)} placeholder="Nome do responsável" />
             </div>
           </div>
-          <DialogFooter className="gap-2 pt-2">
-            <Button type="button" variant="outline" onClick={onClose} disabled={mutation.isPending}>Cancelar</Button>
-            <Button type="submit" disabled={mutation.isPending} className="bg-accent text-accent-foreground hover:bg-accent/90">
-              {mutation.isPending ? "A guardar…" : isEdit ? "Guardar" : "Criar Salão"}
-            </Button>
-          </DialogFooter>
-        </form>
+          <div className="space-y-1">
+            <Label>Representante</Label>
+            <Select value={repId} onValueChange={setRepId}>
+              <SelectTrigger><SelectValue placeholder="Atribuir representante…" /></SelectTrigger>
+              <SelectContent>
+                {reps.map((r) => <SelectItem key={r.id} value={r.id}>{r.nome}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Data início parceria</Label>
+            <Input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button className="bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => mutation.mutate()} disabled={!nome.trim() || mutation.isPending}>
+            {mutation.isPending ? "A guardar…" : "Guardar"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-// ─── Salon Sheet ──────────────────────────────────────────────────────────────
-
+// ── Salon Sheet ───────────────────────────────────────────────────────────────
 function SalonSheet({
   salon,
   onClose,
-  reps,
+  data: d,
 }: {
-  salon: SalonCard | null;
+  salon: Salon | null;
   onClose: () => void;
-  reps: Pick<Profile, "id" | "nome">[];
+  data: Awaited<ReturnType<typeof fetchSaloesData>> | undefined;
 }) {
   const [visitOpen, setVisitOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
 
-  const { data: detail } = useQuery({
-    queryKey: ["salon-detail", salon?.id],
-    queryFn: () => fetchSalonDetail(salon!.id),
-    enabled: !!salon,
-  });
+  if (!salon || !d) return null;
 
-  const { data: tabs } = useQuery({
-    queryKey: ["salon-tabs", salon?.id],
-    queryFn: () => fetchSalonTabs(salon!.id),
-    enabled: !!salon,
-  });
+  const salonVisits = d.visits.filter((v) => v.salon_id === salon.id);
+  const salonTransfers = d.transfers.filter((t) => t.salon_id === salon.id);
+  const salonSales = d.sales.filter((s) => s.salon_id === salon.id);
 
-  if (!salon) return null;
+  const monthSales = salonSales.filter((s) => s.data >= d.monthStart);
+  const monthRevenue = monthSales.reduce((sum, s) => sum + Number(s.preco_final), 0);
+  const pendingComm = salonSales.reduce((sum, s) => sum + Number(s.comissao_salao ?? 0), 0);
+  const lastVisit = salonVisits[0]?.data ?? null;
+  const stockCount = salonTransfers.length; // rough proxy
 
-  const dias = daysSince(salon.ultima_visita);
-
-  const detailKpis = [
-    { label: "Stock no Salão (un.)", value: detail?.stock_unidades ?? "…" },
-    { label: "Vendas do Mês", value: detail ? eur(detail.vendas_mes) : "…" },
-    { label: "Comissão Pendente", value: detail ? eur(detail.comissao_pendente) : "…" },
-    {
-      label: "Última Visita",
-      value: detail?.ultima_visita ? fmtDate(detail.ultima_visita) : "Sem registo",
-    },
+  const miniStats = [
+    { label: "Transferências este mês", value: salonTransfers.length + " linhas" },
+    { label: "Vendas do Mês", value: eur(monthRevenue) },
+    { label: "Comissão Pendente", value: eur(pendingComm) },
+    { label: "Última Visita", value: fmtDate(lastVisit) },
   ];
 
   return (
     <>
       <Sheet open={!!salon} onOpenChange={(v) => !v && onClose()}>
-        <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
-          <SheetHeader className="mb-6">
+        <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
+          <SheetHeader className="mb-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <SheetTitle className="font-display text-2xl">{salon.nome}</SheetTitle>
-                {salon.morada && (
-                  <p className="text-sm text-muted-foreground flex items-center gap-1 mt-1">
-                    <MapPin className="h-3.5 w-3.5" /> {salon.morada}
-                  </p>
-                )}
+                <SheetTitle className="text-xl">{salon.nome}</SheetTitle>
+                <div className="flex flex-col gap-1 mt-2 text-sm text-muted-foreground">
+                  {salon.morada && <span className="flex items-center gap-1"><MapPin className="h-3 w-3" /> {salon.morada}</span>}
+                  {salon.telefone && <span className="flex items-center gap-1"><Phone className="h-3 w-3" /> {salon.telefone}</span>}
+                  {salon.contacto_nome && <span className="flex items-center gap-1"><User className="h-3 w-3" /> {salon.contacto_nome}</span>}
+                  {salon.representante_id && <span className="flex items-center gap-1"><User className="h-3 w-3" /> Rep: {d.repMap.get(salon.representante_id) ?? "—"}</span>}
+                </div>
               </div>
-              <Badge className="bg-accent text-accent-foreground shrink-0">Activo</Badge>
-            </div>
-            <div className="flex flex-wrap gap-4 text-sm text-muted-foreground mt-2">
-              {salon.telefone && (
-                <span className="flex items-center gap-1">
-                  <Phone className="h-3.5 w-3.5" /> {salon.telefone}
-                </span>
-              )}
-              {salon.contacto_nome && (
-                <span className="flex items-center gap-1">
-                  <User className="h-3.5 w-3.5" /> {salon.contacto_nome}
-                </span>
-              )}
-              {salon.representante_nome && (
-                <span className="flex items-center gap-1">
-                  <User className="h-3.5 w-3.5" /> Rep: {salon.representante_nome}
-                </span>
-              )}
-            </div>
-            <div className="flex gap-2 mt-3 flex-wrap">
-              <Button
-                size="sm"
-                className="bg-accent text-accent-foreground hover:bg-accent/90"
-                onClick={() => setVisitOpen(true)}
-              >
-                <CalendarDays className="h-4 w-4 mr-1" />
-                Registar Visita
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}>
-                Editar Salão
-              </Button>
+              <div className="flex gap-2 shrink-0 mt-1">
+                <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}>Editar</Button>
+                <Button size="sm" className="bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => setVisitOpen(true)}>
+                  <Plus className="h-3 w-3 mr-1" /> Visita
+                </Button>
+              </div>
             </div>
           </SheetHeader>
 
-          {/* Mini KPIs */}
-          <div className="grid grid-cols-2 gap-3 mb-6">
-            {detailKpis.map((k) => (
-              <Card key={k.label} className="p-4">
-                <p className="text-xs text-muted-foreground uppercase tracking-wider">{k.label}</p>
-                <p className="text-xl font-display font-semibold mt-1">{k.value}</p>
+          <div className="grid grid-cols-2 gap-3 mb-5">
+            {miniStats.map((s) => (
+              <Card key={s.label} className="p-3">
+                <p className="text-xs text-muted-foreground">{s.label}</p>
+                <p className="font-semibold mt-1">{s.value}</p>
               </Card>
             ))}
           </div>
 
-          {/* Tabs */}
-          <Tabs defaultValue="transferencias">
-            <TabsList className="w-full">
-              <TabsTrigger value="transferencias" className="flex-1">Transferências</TabsTrigger>
-              <TabsTrigger value="vendas" className="flex-1">Vendas</TabsTrigger>
-              <TabsTrigger value="devolucoes" className="flex-1">Devoluções</TabsTrigger>
-              <TabsTrigger value="visitas" className="flex-1">Visitas</TabsTrigger>
+          <Tabs defaultValue="visitas">
+            <TabsList className="w-full grid grid-cols-4 mb-4">
+              <TabsTrigger value="transferencias">Transfer.</TabsTrigger>
+              <TabsTrigger value="vendas">Vendas</TabsTrigger>
+              <TabsTrigger value="devolucoes">Devol.</TabsTrigger>
+              <TabsTrigger value="visitas">Visitas</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="transferencias" className="mt-4">
-              {!tabs && <p className="text-sm text-muted-foreground py-4">A carregar…</p>}
-              {tabs && tabs.transfers.length === 0 && (
-                <p className="text-sm text-muted-foreground py-4">Sem transferências registadas.</p>
-              )}
-              {tabs && tabs.transfers.length > 0 && (
+            <TabsContent value="transferencias">
+              {salonTransfers.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Sem transferências este mês.</p>
+              ) : (
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-primary hover:bg-primary">
-                      <TableHead className="text-primary-foreground font-semibold">Data</TableHead>
-                      <TableHead className="text-primary-foreground font-semibold">Produto</TableHead>
-                      <TableHead className="text-primary-foreground font-semibold text-right">Qtd</TableHead>
-                      <TableHead className="text-primary-foreground font-semibold">Nota</TableHead>
+                      <TableHead className="text-primary-foreground">Data</TableHead>
+                      <TableHead className="text-primary-foreground">Produto</TableHead>
+                      <TableHead className="text-primary-foreground text-right">Qtd</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {tabs.transfers.map((t: any) => (
+                    {salonTransfers.map((t) => (
                       <TableRow key={t.id}>
-                        <TableCell className="text-muted-foreground tabular-nums">{fmtDate(t.data)}</TableCell>
-                        <TableCell>{t.products?.nome ?? "—"}</TableCell>
-                        <TableCell className="text-right tabular-nums">{t.quantidade}</TableCell>
-                        <TableCell className="text-muted-foreground text-sm">{t.nota ?? "—"}</TableCell>
+                        <TableCell>{fmtDate(t.data)}</TableCell>
+                        <TableCell>{d.prodMap.get(t.produto_id) ?? t.produto_id}</TableCell>
+                        <TableCell className="text-right">{t.quantidade}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -676,30 +405,24 @@ function SalonSheet({
               )}
             </TabsContent>
 
-            <TabsContent value="vendas" className="mt-4">
-              {!tabs && <p className="text-sm text-muted-foreground py-4">A carregar…</p>}
-              {tabs && tabs.sales.length === 0 && (
-                <p className="text-sm text-muted-foreground py-4">Sem vendas registadas.</p>
-              )}
-              {tabs && tabs.sales.length > 0 && (
+            <TabsContent value="vendas">
+              {salonSales.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Sem vendas registadas.</p>
+              ) : (
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-primary hover:bg-primary">
-                      <TableHead className="text-primary-foreground font-semibold">Data</TableHead>
-                      <TableHead className="text-primary-foreground font-semibold">Produto</TableHead>
-                      <TableHead className="text-primary-foreground font-semibold text-right">Qtd</TableHead>
-                      <TableHead className="text-primary-foreground font-semibold text-right">Total</TableHead>
-                      <TableHead className="text-primary-foreground font-semibold text-right">Comissão</TableHead>
+                      <TableHead className="text-primary-foreground">Data</TableHead>
+                      <TableHead className="text-primary-foreground">Produto</TableHead>
+                      <TableHead className="text-primary-foreground text-right">Total</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {tabs.sales.map((s: any) => (
+                    {salonSales.slice(0, 30).map((s) => (
                       <TableRow key={s.id}>
-                        <TableCell className="text-muted-foreground tabular-nums">{fmtDate(s.data)}</TableCell>
-                        <TableCell>{s.products?.nome ?? "—"}</TableCell>
-                        <TableCell className="text-right tabular-nums">{s.quantidade}</TableCell>
-                        <TableCell className="text-right tabular-nums">{eur(Number(s.preco_final))}</TableCell>
-                        <TableCell className="text-right tabular-nums">{eur(Number(s.comissao_salao))}</TableCell>
+                        <TableCell>{fmtDate(s.data)}</TableCell>
+                        <TableCell>{d.prodMap.get(s.produto_id) ?? s.produto_id}</TableCell>
+                        <TableCell className="text-right">{eur(Number(s.preco_final))}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -707,172 +430,81 @@ function SalonSheet({
               )}
             </TabsContent>
 
-            <TabsContent value="devolucoes" className="mt-4">
-              {!tabs && <p className="text-sm text-muted-foreground py-4">A carregar…</p>}
-              {tabs && tabs.returns.length === 0 && (
-                <p className="text-sm text-muted-foreground py-4">Sem devoluções registadas.</p>
-              )}
-              {tabs && tabs.returns.length > 0 && (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-primary hover:bg-primary">
-                      <TableHead className="text-primary-foreground font-semibold">Data</TableHead>
-                      <TableHead className="text-primary-foreground font-semibold">Produto</TableHead>
-                      <TableHead className="text-primary-foreground font-semibold text-right">Qtd</TableHead>
-                      <TableHead className="text-primary-foreground font-semibold">Motivo</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {tabs.returns.map((r: any) => (
-                      <TableRow key={r.id}>
-                        <TableCell className="text-muted-foreground tabular-nums">{fmtDate(r.data)}</TableCell>
-                        <TableCell>{r.products?.nome ?? "—"}</TableCell>
-                        <TableCell className="text-right tabular-nums">{r.quantidade}</TableCell>
-                        <TableCell className="text-muted-foreground text-sm">{r.motivo ?? "—"}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
+            <TabsContent value="devolucoes">
+              <p className="text-sm text-muted-foreground">Sem devoluções registadas.</p>
             </TabsContent>
 
-            <TabsContent value="visitas" className="mt-4">
-              {!tabs && <p className="text-sm text-muted-foreground py-4">A carregar…</p>}
-              {tabs && tabs.visits.length === 0 && (
-                <p className="text-sm text-muted-foreground py-4">Sem visitas registadas.</p>
-              )}
-              {tabs && tabs.visits.length > 0 && (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-primary hover:bg-primary">
-                      <TableHead className="text-primary-foreground font-semibold">Data</TableHead>
-                      <TableHead className="text-primary-foreground font-semibold">Representante</TableHead>
-                      <TableHead className="text-primary-foreground font-semibold">Notas</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {tabs.visits.map((v: any) => (
-                      <TableRow key={v.id}>
-                        <TableCell className="text-muted-foreground tabular-nums">{fmtDate(v.data)}</TableCell>
-                        <TableCell>{v.profiles?.nome ?? "—"}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{v.notas ?? "—"}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+            <TabsContent value="visitas">
+              {salonVisits.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Sem visitas registadas.</p>
+              ) : (
+                <div className="space-y-2">
+                  {salonVisits.map((v) => (
+                    <Card key={v.id} className="p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">{fmtDate(v.data)}</span>
+                        <span className="text-xs text-muted-foreground">{d.repMap.get(v.representante_id) ?? "—"}</span>
+                      </div>
+                      {v.notas && <p className="text-xs text-muted-foreground mt-1">{v.notas}</p>}
+                    </Card>
+                  ))}
+                </div>
               )}
             </TabsContent>
           </Tabs>
         </SheetContent>
       </Sheet>
 
-      <VisitModal
-        open={visitOpen}
-        onClose={() => setVisitOpen(false)}
-        salonId={salon.id}
-        salonNome={salon.nome}
-      />
-      <SalonModal
-        open={editOpen}
-        onClose={() => setEditOpen(false)}
-        initial={salon}
-        reps={reps}
-      />
+      <VisitModal open={visitOpen} onClose={() => setVisitOpen(false)} salonId={salon.id} />
+      <SalonModal open={editOpen} onClose={() => setEditOpen(false)} salon={salon} reps={d.repList} />
     </>
   );
 }
 
-// ─── Page ──────────────────────────────────────────────────────────────────────
+// ── Page ──────────────────────────────────────────────────────────────────────
+const SEED_SALONS = ["Made in Brasil", "Brooklyn Barber Studio", "Andrade Hair", "Kesia Nails"];
 
 function SaloesPage() {
   const qc = useQueryClient();
+  const { data, isLoading } = useQuery({ queryKey: ["saloes"], queryFn: fetchSaloesData });
 
-  const { data: saloes = [], isLoading } = useQuery({
-    queryKey: ["saloes"],
-    queryFn: fetchSaloes,
-  });
+  const [selected, setSelected] = useState<Salon | null>(null);
+  const [newOpen, setNewOpen] = useState(false);
 
-  const { data: kpiExtras } = useQuery({
-    queryKey: ["saloes-kpi"],
-    queryFn: fetchKpiExtras,
-  });
-
-  const { data: reps = [] } = useQuery({
-    queryKey: ["reps"],
-    queryFn: fetchReps,
-  });
-
-  const [search, setSearch] = useState("");
-  const [selectedSalon, setSelectedSalon] = useState<SalonCard | null>(null);
-  const [newSalonOpen, setNewSalonOpen] = useState(false);
-
-  const filtered = useMemo(
-    () =>
-      saloes.filter(
-        (s) =>
-          !search ||
-          s.nome.toLowerCase().includes(search.toLowerCase()) ||
-          (s.representante_nome ?? "").toLowerCase().includes(search.toLowerCase())
-      ),
-    [saloes, search]
-  );
-
-  const visitasEmAtraso = useMemo(
-    () =>
-      saloes.filter((s) => {
-        const d = daysSince(s.ultima_visita);
-        return d === null || d > VISIT_ALERT_DAYS;
-      }).length,
-    [saloes]
-  );
+  const salons = data?.salons ?? [];
+  const activeSalons = salons.filter((s) => s.ativo);
 
   const seedMutation = useMutation({
     mutationFn: async () => {
-      const { error } = await supabase
-        .from("salons")
-        .insert(SEED_SALONS.map((s) => ({ nome: s.nome, ativo: true })));
+      const { error } = await supabase.from("salons").insert(
+        SEED_SALONS.map((nome) => ({ nome, ativo: true })),
+      );
       if (error) throw error;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["saloes"] });
-      toast.success("Salões iniciais criados.");
-    },
-    onError: (e: any) => toast.error(e.message ?? "Erro ao criar salões."),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["saloes"] }); toast.success("Salões criados."); },
+    onError: (e: any) => toast.error("Erro", { description: e.message }),
   });
 
   const kpis = [
-    { label: "Salões Activos", value: isLoading ? "…" : saloes.length, icon: Store },
-    { label: "Visitas em Atraso", value: isLoading ? "…" : visitasEmAtraso, icon: AlertTriangle },
-    {
-      label: "Transferências este mês",
-      value: kpiExtras ? eur(kpiExtras.transfersEur) : "…",
-      icon: ArrowRightLeft,
-    },
-    {
-      label: "Comissões Pendentes",
-      value: kpiExtras ? eur(kpiExtras.comissoesPendentes) : "…",
-      icon: Coins,
-    },
+    { label: "Salões Activos", value: activeSalons.length, icon: Store },
+    { label: "Visitas em Atraso", value: data?.lateCount ?? "—", icon: AlertTriangle },
+    { label: "Transf. este mês", value: data ? data.transfers.length + " linhas" : "—", icon: Banknote },
+    { label: "Comissões Pendentes", value: data ? eur(data.pendingCommissions) : "—", icon: Coins },
   ];
 
   return (
     <div className="space-y-8">
-      <header className="flex items-start justify-between gap-4 flex-wrap">
+      <header className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-sm uppercase tracking-[0.2em] text-muted-foreground">Rede</p>
+          <p className="text-sm uppercase tracking-[0.2em] text-muted-foreground">Parceiros</p>
           <h1 className="text-3xl md:text-4xl font-display font-semibold mt-1">Salões</h1>
           <p className="text-muted-foreground mt-2">Gestão de salões parceiros e visitas.</p>
         </div>
-        <Button
-          className="bg-accent text-accent-foreground hover:bg-accent/90 shrink-0"
-          onClick={() => setNewSalonOpen(true)}
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Novo Salão
+        <Button className="bg-accent text-accent-foreground hover:bg-accent/90 shrink-0 mt-2" onClick={() => setNewOpen(true)}>
+          <Plus className="h-4 w-4 mr-2" /> Novo Salão
         </Button>
       </header>
 
-      {/* KPIs */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map((k) => {
           const Icon = k.icon;
@@ -881,7 +513,7 @@ function SaloesPage() {
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wider">{k.label}</p>
-                  <p className="text-2xl font-display font-semibold mt-2">{k.value}</p>
+                  <p className="text-2xl font-display font-semibold mt-2">{isLoading ? "…" : k.value}</p>
                 </div>
                 <div className="h-10 w-10 rounded-full bg-secondary text-primary flex items-center justify-center">
                   <Icon className="h-5 w-5" />
@@ -892,112 +524,58 @@ function SaloesPage() {
         })}
       </section>
 
-      {/* Search */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <Input
-          placeholder="Pesquisar salão ou representante…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-64"
-        />
-        <span className="text-sm text-muted-foreground ml-auto">
-          {filtered.length} salão{filtered.length !== 1 ? "ões" : ""}
-        </span>
-      </div>
-
-      {/* Seed banner */}
-      {!isLoading && saloes.length === 0 && (
-        <Card className="p-6 border-dashed">
-          <div className="flex flex-col items-center gap-3 text-center">
-            <Leaf className="h-10 w-10 text-muted-foreground" />
-            <div>
-              <p className="font-medium">Nenhum salão ainda</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Cria os salões iniciais (Made in Brasil, Brooklyn Barber Studio, Andrade Hair, Kesia Nails)
-                ou adiciona um manualmente.
-              </p>
-            </div>
-            <Button
-              onClick={() => seedMutation.mutate()}
-              disabled={seedMutation.isPending}
-              className="bg-accent text-accent-foreground hover:bg-accent/90"
-            >
-              <Leaf className="h-4 w-4 mr-2" />
-              {seedMutation.isPending ? "A criar…" : "Criar salões iniciais"}
-            </Button>
-          </div>
+      {!isLoading && salons.length === 0 && (
+        <Card className="p-8 flex flex-col items-center gap-3 text-center">
+          <Store className="h-10 w-10 text-muted-foreground" />
+          <p className="font-semibold">Nenhum salão encontrado</p>
+          <p className="text-sm text-muted-foreground">Crie os salões iniciais ou adicione um novo.</p>
+          <Button
+            className="bg-accent text-accent-foreground hover:bg-accent/90 mt-2"
+            onClick={() => seedMutation.mutate()}
+            disabled={seedMutation.isPending}
+          >
+            {seedMutation.isPending ? "A criar…" : "Criar salões iniciais"}
+          </Button>
         </Card>
       )}
 
-      {/* Salon cards grid */}
-      {isLoading && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map((i) => (
-            <Card key={i} className="p-5 animate-pulse h-36" />
-          ))}
-        </div>
-      )}
-
-      {!isLoading && filtered.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {filtered.map((s) => {
-            const dias = daysSince(s.ultima_visita);
-            const atrasada = dias === null || dias > VISIT_ALERT_DAYS;
-            return (
-              <Card
-                key={s.id}
-                className="p-5 shadow-card cursor-pointer hover:shadow-md transition-shadow border hover:border-accent/50"
-                onClick={() => setSelectedSalon(s)}
-              >
-                <div className="flex items-start justify-between gap-2 mb-3">
-                  <h3 className="font-display font-semibold text-base leading-tight">{s.nome}</h3>
-                  <Badge className="bg-accent text-accent-foreground shrink-0 text-xs">Activo</Badge>
-                </div>
-
-                {s.representante_nome && (
-                  <p className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
-                    <User className="h-3 w-3" /> {s.representante_nome}
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {salons.map((salon) => {
+          const lastVisit = data?.lastVisitMap.get(salon.id) ?? null;
+          const repName = salon.representante_id ? data?.repMap.get(salon.representante_id) : null;
+          return (
+            <Card
+              key={salon.id}
+              className="p-5 cursor-pointer hover:shadow-md transition-shadow space-y-3"
+              onClick={() => setSelected(salon)}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="font-semibold text-base leading-tight">{salon.nome}</p>
+                <VisitBadge lastVisit={lastVisit} />
+              </div>
+              <div className="text-sm text-muted-foreground space-y-1">
+                {salon.morada && (
+                  <p className="flex items-center gap-1.5">
+                    <MapPin className="h-3.5 w-3.5 shrink-0" /> {salon.morada}
                   </p>
                 )}
-                {s.morada && (
-                  <p className="text-xs text-muted-foreground flex items-center gap-1 mb-1 truncate">
-                    <MapPin className="h-3 w-3 shrink-0" /> {s.morada}
+                {repName && (
+                  <p className="flex items-center gap-1.5">
+                    <User className="h-3.5 w-3.5 shrink-0" /> {repName}
                   </p>
                 )}
+                <p className="flex items-center gap-1.5">
+                  <Calendar className="h-3.5 w-3.5 shrink-0" />
+                  Última visita: {fmtDate(lastVisit)}
+                </p>
+              </div>
+            </Card>
+          );
+        })}
+      </section>
 
-                <div className="mt-3 pt-3 border-t flex items-center justify-between gap-2">
-                  <p className="text-xs text-muted-foreground">
-                    {s.ultima_visita
-                      ? `Última visita: ${fmtDate(s.ultima_visita)}`
-                      : "Sem visitas"}
-                  </p>
-                  {atrasada ? (
-                    <Badge className="bg-destructive text-destructive-foreground text-[10px] px-1.5">
-                      Em atraso
-                    </Badge>
-                  ) : (
-                    <Badge className="bg-emerald-600 text-white text-[10px] px-1.5">
-                      Em dia
-                    </Badge>
-                  )}
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      )}
-
-      <SalonSheet
-        salon={selectedSalon}
-        onClose={() => setSelectedSalon(null)}
-        reps={reps}
-      />
-      <SalonModal
-        open={newSalonOpen}
-        onClose={() => setNewSalonOpen(false)}
-        initial={null}
-        reps={reps}
-      />
+      <SalonSheet salon={selected} onClose={() => setSelected(null)} data={data} />
+      <SalonModal open={newOpen} onClose={() => setNewOpen(false)} salon={null} reps={data?.repList ?? []} />
     </div>
   );
 }
