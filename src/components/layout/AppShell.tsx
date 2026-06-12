@@ -13,13 +13,16 @@ export type CurrentUser = {
 async function fetchCurrentUser(): Promise<CurrentUser | null> {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return null;
-  const [{ data: profile }, { data: roles }] = await Promise.all([
+  const [{ data: profile }, { data: adminRole }] = await Promise.all([
     supabase.from("profiles").select("nome,email").eq("id", auth.user.id).maybeSingle(),
-    supabase.from("user_roles").select("role").eq("user_id", auth.user.id),
+    supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", auth.user.id)
+      .eq("role", "admin")
+      .maybeSingle(),
   ]);
-  const role = (roles?.some((r) => r.role === "admin") ? "admin" : "representante") as
-    | "admin"
-    | "representante";
+  const role = (adminRole ? "admin" : "representante") as "admin" | "representante";
   return {
     id: auth.user.id,
     email: profile?.email ?? auth.user.email ?? "",
