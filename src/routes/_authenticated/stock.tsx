@@ -1,205 +1,97 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
-import { toast } from "sonner";
+import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Package,
-  AlertTriangle,
-  XCircle,
-  Coins,
-  Plus,
-  ChevronLeft,
-  ChevronRight,
-  Trash2,
-} from "lucide-react";
-import type { Tables } from "@/integrations/supabase/types";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+import { Package, AlertTriangle, XCircle, Coins, Plus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/stock")({
-  head: () => ({
-    meta: [
-      { title: "Stock Central — Secrets VIP" },
-      { name: "description", content: "Gestão de stock, compras e ajustes manuais." },
-    ],
-  }),
+  head: () => ({ meta: [{ title: "Stock — Secrets VIP" }] }),
   component: StockPage,
 });
 
-type Product = Tables<"products">;
-type Cycle = Tables<"boticario_cycles">;
-
 type StockRow = {
-  id: string;
+  produto_id: string;
   nome: string;
   categoria: string;
-  preco_custo: number;
-  unidade_min_stock: number;
   stock_qg: number;
-  em_saloes: number;
-  esgota_em: number | null;
+  unidade_min_stock: number;
+  validade_meses: number;
 };
 
-const PAGE_SIZE = 20;
+type Product = { id: string; nome: string; preco_custo: number };
+type Cycle = { id: string; nome: string };
 
 function eur(v: number) {
   return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(v);
 }
 
-function today() {
-  return new Date().toISOString().slice(0, 10);
+function StatusBadge({ stock, min }: { stock: number; min: number }) {
+  if (stock <= 0) return <Badge className="bg-red-600 text-white hover:bg-red-600">Crítico</Badge>;
+  if (stock < min) return <Badge className="bg-orange-500 text-white hover:bg-orange-500">Alerta</Badge>;
+  return <Badge className="bg-green-600 text-white hover:bg-green-600">OK</Badge>;
 }
 
-async function fetchStockData(): Promise<StockRow[]> {
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
+async function fetchStockData() {
+  const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
   const [
-    { data: stockView, error: svErr },
-    { data: products, error: pErr },
-    { data: salonSales, error: ssErr },
-    { data: directSales, error: dsErr },
-    { data: transfers, error: tErr },
-    { data: returns, error: rErr },
+    { data: stockRows },
+    { data: products },
+    { data: salonSales },
+    { data: directSales },
+    { data: cycles },
   ] = await Promise.all([
-    supabase.from("stock_central").select("produto_id, stock_qg, unidade_min_stock"),
-    supabase
-      .from("products")
-      .select("id, nome, categoria, preco_custo, unidade_min_stock, ativo")
-      .eq("ativo", true)
-      .order("nome"),
-    supabase
-      .from("salon_sales")
-      .select("produto_id, quantidade")
-      .gte("data", thirtyDaysAgo),
-    supabase
-      .from("rep_direct_sales")
-      .select("produto_id, quantidade")
-      .gte("data", thirtyDaysAgo),
-    supabase.from("transfers").select("produto_id, quantidade"),
-    supabase.from("returns").select("produto_id, quantidade"),
+    supabase.from("stock_central").select("*"),
+    supabase.from("products").select("id,nome,preco_custo").eq("ativo", true).order("nome"),
+    supabase.from("salon_sales").select("produto_id,quantidade,data").gte("data", since30),
+    supabase.from("rep_direct_sales").select("produto_id,quantidade,data").gte("data", since30),
+    supabase.from("boticario_cycles").select("id,nome").eq("ativo", true).order("nome"),
   ]);
 
-  if (svErr) throw svErr;
-  if (pErr) throw pErr;
-  if (ssErr) throw ssErr;
-  if (dsErr) throw dsErr;
-  if (tErr) throw tErr;
-  if (rErr) throw rErr;
-
-  const stockMap = new Map<string, number>();
-  const minMap = new Map<string, number>();
-  for (const s of stockView ?? []) {
-    stockMap.set(s.produto_id!, Number(s.stock_qg ?? 0));
-    minMap.set(s.produto_id!, Number(s.unidade_min_stock ?? 0));
-  }
-
-  const transfersMap = new Map<string, number>();
-  for (const t of transfers ?? []) {
-    transfersMap.set(t.produto_id, (transfersMap.get(t.produto_id) ?? 0) + t.quantidade);
-  }
-  const returnsMap = new Map<string, number>();
-  for (const r of returns ?? []) {
-    returnsMap.set(r.produto_id, (returnsMap.get(r.produto_id) ?? 0) + r.quantidade);
-  }
-
+  // build daily sales map: produto_id → total qty in 30 days
   const salesMap = new Map<string, number>();
   for (const s of [...(salonSales ?? []), ...(directSales ?? [])]) {
-    salesMap.set(s.produto_id, (salesMap.get(s.produto_id) ?? 0) + s.quantidade);
+    salesMap.set(s.produto_id, (salesMap.get(s.produto_id) ?? 0) + Number(s.quantidade));
   }
 
-  return (products ?? []).map((p) => {
-    const stockQG = stockMap.get(p.id) ?? 0;
-    const emSaloes = Math.max(
-      0,
-      (transfersMap.get(p.id) ?? 0) - (returnsMap.get(p.id) ?? 0)
-    );
-    const totalSales30 = salesMap.get(p.id) ?? 0;
-    const avgDaily = totalSales30 / 30;
-    const esgotaEm = avgDaily > 0 ? Math.round(stockQG / avgDaily) : null;
-
+  const rows: (StockRow & { esgota_dias: number | null; preco_custo: number })[] = (
+    stockRows ?? []
+  ).map((r: any) => {
+    const totalQty30 = salesMap.get(r.produto_id) ?? 0;
+    const avgDaily = totalQty30 / 30;
+    const esgota_dias = avgDaily > 0 ? Math.round(Number(r.stock_qg) / avgDaily) : null;
+    const prod = (products ?? []).find((p: Product) => p.id === r.produto_id);
     return {
-      id: p.id,
-      nome: p.nome,
-      categoria: p.categoria,
-      preco_custo: Number(p.preco_custo),
-      unidade_min_stock: minMap.get(p.id) ?? p.unidade_min_stock,
-      stock_qg: stockQG,
-      em_saloes: emSaloes,
-      esgota_em: esgotaEm,
+      produto_id: r.produto_id,
+      nome: r.nome ?? "",
+      categoria: r.categoria ?? "",
+      stock_qg: Number(r.stock_qg ?? 0),
+      unidade_min_stock: Number(r.unidade_min_stock ?? 0),
+      validade_meses: Number(r.validade_meses ?? 0),
+      esgota_dias,
+      preco_custo: prod?.preco_custo ?? 0,
     };
   });
+
+  return {
+    rows,
+    products: products ?? [],
+    cycles: cycles ?? [],
+  };
 }
 
-async function fetchCyclesAndProducts() {
-  const [{ data: cycles, error: cErr }, { data: products, error: pErr }] = await Promise.all([
-    supabase
-      .from("boticario_cycles")
-      .select("id, nome, numero_ciclo")
-      .eq("ativo", true)
-      .order("numero_ciclo", { ascending: false }),
-    supabase
-      .from("products")
-      .select("id, nome, preco_custo")
-      .eq("ativo", true)
-      .order("nome"),
-  ]);
-  if (cErr) throw cErr;
-  if (pErr) throw pErr;
-  return { cycles: cycles ?? [], products: products ?? [] };
-}
-
-function statusBadge(stock: number, min: number) {
-  if (stock === 0)
-    return <Badge className="bg-destructive text-destructive-foreground">Crítico</Badge>;
-  if (stock < min) return <Badge className="bg-orange-500 text-white">Alerta</Badge>;
-  return <Badge className="bg-emerald-600 text-white">OK</Badge>;
-}
-
-// ─── Modal: Ajuste Manual ────────────────────────────────────────────────────
-
-type AjusteForm = {
-  produto_id: string;
-  tipo: "entrada" | "saida" | "quebra";
-  quantidade: string;
-  motivo: string;
-};
-
-const BLANK_AJUSTE: AjusteForm = {
-  produto_id: "",
-  tipo: "entrada",
-  quantidade: "",
-  motivo: "",
-};
-
+// ── Ajuste Modal ──────────────────────────────────────────────────────────────
 function AjusteModal({
   open,
   onClose,
@@ -207,60 +99,49 @@ function AjusteModal({
 }: {
   open: boolean;
   onClose: () => void;
-  products: Pick<Product, "id" | "nome">[];
+  products: Product[];
 }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState<AjusteForm>({ ...BLANK_AJUSTE });
+  const [produtoId, setProdutoId] = useState("");
+  const [tipo, setTipo] = useState<"entrada" | "saida" | "quebra">("entrada");
+  const [quantidade, setQuantidade] = useState("");
+  const [motivo, setMotivo] = useState("");
 
-  function set<K extends keyof AjusteForm>(k: K, v: AjusteForm[K]) {
-    setForm((prev) => ({ ...prev, [k]: v }));
-  }
+  useEffect(() => {
+    if (open) { setProdutoId(""); setTipo("entrada"); setQuantidade(""); setMotivo(""); }
+  }, [open]);
 
   const mutation = useMutation({
     mutationFn: async () => {
-      if (!form.produto_id || !form.quantidade || !form.motivo.trim()) {
-        throw new Error("Preenche todos os campos obrigatórios.");
-      }
       const { error } = await supabase.from("stock_adjustments").insert({
-        produto_id: form.produto_id,
-        tipo: form.tipo,
-        quantidade: parseInt(form.quantidade),
-        motivo: form.motivo.trim(),
+        produto_id: produtoId,
+        tipo,
+        quantidade: parseInt(quantidade),
+        motivo: motivo.trim(),
       });
       if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["stock"] });
-      toast.success("Ajuste registado com sucesso.");
-      setForm({ ...BLANK_AJUSTE });
+      toast.success("Ajuste registado.");
       onClose();
     },
-    onError: (e: any) => toast.error(e.message ?? "Erro ao registar ajuste."),
+    onError: (e: any) => toast.error("Erro ao guardar", { description: e.message }),
   });
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    mutation.mutate();
-  }
+  const valid = produtoId && quantidade && parseInt(quantidade) > 0 && motivo.trim();
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        if (!v) { setForm({ ...BLANK_AJUSTE }); onClose(); }
-      }}
-    >
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="font-display">Registar Ajuste Manual</DialogTitle>
+          <DialogTitle>Registar Ajuste Manual</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4 mt-2">
+        <div className="space-y-4 py-2">
           <div className="space-y-1">
-            <Label>Produto *</Label>
-            <Select value={form.produto_id} onValueChange={(v) => set("produto_id", v)}>
-              <SelectTrigger>
-                <SelectValue placeholder="Seleccionar produto…" />
-              </SelectTrigger>
+            <Label>Produto</Label>
+            <Select value={produtoId} onValueChange={setProdutoId}>
+              <SelectTrigger><SelectValue placeholder="Seleccionar produto…" /></SelectTrigger>
               <SelectContent>
                 {products.map((p) => (
                   <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
@@ -268,225 +149,149 @@ function AjusteModal({
               </SelectContent>
             </Select>
           </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <Label>Tipo *</Label>
-              <Select
-                value={form.tipo}
-                onValueChange={(v) => set("tipo", v as AjusteForm["tipo"])}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="entrada">Entrada</SelectItem>
-                  <SelectItem value="saida">Saída</SelectItem>
-                  <SelectItem value="quebra">Quebra</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="ajuste-qty">Quantidade *</Label>
-              <Input
-                id="ajuste-qty"
-                type="number"
-                min="1"
-                value={form.quantidade}
-                onChange={(e) => set("quantidade", e.target.value)}
-                placeholder="0"
-              />
-            </div>
-          </div>
-
           <div className="space-y-1">
-            <Label htmlFor="ajuste-motivo">Motivo *</Label>
-            <Input
-              id="ajuste-motivo"
-              value={form.motivo}
-              onChange={(e) => set("motivo", e.target.value)}
-              placeholder="ex. Contagem física, devolução…"
-            />
+            <Label>Tipo</Label>
+            <Select value={tipo} onValueChange={(v) => setTipo(v as any)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="entrada">Entrada</SelectItem>
+                <SelectItem value="saida">Saída</SelectItem>
+                <SelectItem value="quebra">Quebra</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-
-          <DialogFooter className="gap-2 pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => { setForm({ ...BLANK_AJUSTE }); onClose(); }}
-              disabled={mutation.isPending}
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="submit"
-              disabled={mutation.isPending}
-              className="bg-accent text-accent-foreground hover:bg-accent/90"
-            >
-              {mutation.isPending ? "A guardar…" : "Registar Ajuste"}
-            </Button>
-          </DialogFooter>
-        </form>
+          <div className="space-y-1">
+            <Label>Quantidade</Label>
+            <Input type="number" min="1" value={quantidade} onChange={(e) => setQuantidade(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label>Motivo</Label>
+            <Textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Descreva o motivo…" rows={2} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button
+            className="bg-accent text-accent-foreground hover:bg-accent/90"
+            onClick={() => mutation.mutate()}
+            disabled={!valid || mutation.isPending}
+          >
+            {mutation.isPending ? "A guardar…" : "Guardar"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-// ─── Modal: Registar Compra ──────────────────────────────────────────────────
-
-type PurchaseLine = {
-  id: number;
-  produto_id: string;
-  quantidade: string;
-  preco_custo_unit: string;
-};
-
-let lineCounter = 0;
-
-function newLine(): PurchaseLine {
-  return { id: ++lineCounter, produto_id: "", quantidade: "", preco_custo_unit: "" };
-}
+// ── Compra Modal ──────────────────────────────────────────────────────────────
+type PurchaseLine = { produto_id: string; quantidade: string; preco_custo: string };
 
 function CompraModal({
   open,
   onClose,
-  cycles,
   products,
+  cycles,
 }: {
   open: boolean;
   onClose: () => void;
-  cycles: Pick<Cycle, "id" | "nome" | "numero_ciclo">[];
-  products: Pick<Product, "id" | "nome" | "preco_custo">[];
+  products: Product[];
+  cycles: Cycle[];
 }) {
   const qc = useQueryClient();
-  const [cycleId, setCycleId] = useState<string>("");
-  const [dataCompra, setDataCompra] = useState(today());
-  const [lines, setLines] = useState<PurchaseLine[]>(() => [newLine()]);
+  const [cycleId, setCycleId] = useState("");
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
+  const [lines, setLines] = useState<PurchaseLine[]>([{ produto_id: "", quantidade: "", preco_custo: "" }]);
 
-  function resetForm() {
-    setCycleId("");
-    setDataCompra(today());
-    setLines([newLine()]);
+  useEffect(() => {
+    if (open) {
+      setCycleId("");
+      setData(new Date().toISOString().slice(0, 10));
+      setLines([{ produto_id: "", quantidade: "", preco_custo: "" }]);
+    }
+  }, [open]);
+
+  function setLine(i: number, k: keyof PurchaseLine, v: string) {
+    setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, [k]: v } : l)));
   }
 
   function addLine() {
-    setLines((prev) => [...prev, newLine()]);
+    setLines((ls) => [...ls, { produto_id: "", quantidade: "", preco_custo: "" }]);
   }
 
-  function removeLine(id: number) {
-    setLines((prev) => prev.filter((l) => l.id !== id));
-  }
-
-  function updateLine(id: number, field: keyof Omit<PurchaseLine, "id">, value: string) {
-    setLines((prev) =>
-      prev.map((l) => {
-        if (l.id !== id) return l;
-        const next = { ...l, [field]: value };
-        // auto-fill cost from product default
-        if (field === "produto_id") {
-          const p = products.find((p) => p.id === value);
-          if (p) next.preco_custo_unit = String(p.preco_custo);
-        }
-        return next;
-      })
-    );
+  function removeLine(i: number) {
+    setLines((ls) => ls.filter((_, idx) => idx !== i));
   }
 
   const total = lines.reduce((s, l) => {
-    const qty = parseFloat(l.quantidade) || 0;
-    const price = parseFloat(l.preco_custo_unit) || 0;
-    return s + qty * price;
+    const q = parseFloat(l.quantidade) || 0;
+    const p = parseFloat(l.preco_custo) || 0;
+    return s + q * p;
   }, 0);
 
   const mutation = useMutation({
     mutationFn: async () => {
       const validLines = lines.filter(
-        (l) => l.produto_id && l.quantidade && l.preco_custo_unit
+        (l) => l.produto_id && parseInt(l.quantidade) > 0 && parseFloat(l.preco_custo) > 0,
       );
-      if (validLines.length === 0) throw new Error("Adiciona pelo menos uma linha válida.");
-
-      const rows = validLines.map((l) => ({
+      if (validLines.length === 0) throw new Error("Adicione pelo menos uma linha válida.");
+      const inserts = validLines.map((l) => ({
         produto_id: l.produto_id,
         quantidade: parseInt(l.quantidade),
-        preco_custo_unit: parseFloat(l.preco_custo_unit),
-        data_compra: dataCompra,
+        preco_custo_unit: parseFloat(l.preco_custo),
+        data_compra: data,
         cycle_id: cycleId || null,
       }));
-
-      const { error } = await supabase.from("purchases").insert(rows);
+      const { error } = await supabase.from("purchases").insert(inserts);
       if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["stock"] });
-      toast.success("Compra registada com sucesso.");
-      resetForm();
+      toast.success("Compra registada.");
       onClose();
     },
-    onError: (e: any) => toast.error(e.message ?? "Erro ao registar compra."),
+    onError: (e: any) => toast.error("Erro ao guardar", { description: e.message }),
   });
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    mutation.mutate();
-  }
+  const validLines = lines.filter(
+    (l) => l.produto_id && parseInt(l.quantidade) > 0 && parseFloat(l.preco_custo) > 0,
+  );
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        if (!v) { resetForm(); onClose(); }
-      }}
-    >
-      <DialogContent className="max-w-2xl">
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-display">Registar Compra</DialogTitle>
+          <DialogTitle>Registar Compra</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-5 mt-2">
-          <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-4 py-2">
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label>Ciclo O Boticário</Label>
+              <Label>Ciclo</Label>
               <Select value={cycleId} onValueChange={setCycleId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Seleccionar ciclo (opcional)…" />
-                </SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Seleccionar ciclo…" /></SelectTrigger>
                 <SelectContent>
                   {cycles.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.numero_ciclo ? `Ciclo ${c.numero_ciclo} — ` : ""}
-                      {c.nome}
-                    </SelectItem>
+                    <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1">
-              <Label htmlFor="data-compra">Data da Compra *</Label>
-              <Input
-                id="data-compra"
-                type="date"
-                value={dataCompra}
-                onChange={(e) => setDataCompra(e.target.value)}
-              />
+              <Label>Data</Label>
+              <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
             </div>
           </div>
 
-          {/* Lines */}
           <div className="space-y-2">
-            <div className="grid grid-cols-[1fr_80px_100px_32px] gap-2 px-1">
-              <span className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Produto</span>
-              <span className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Qtd</span>
-              <span className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Preço Custo</span>
-              <span />
-            </div>
-            {lines.map((line) => (
-              <div key={line.id} className="grid grid-cols-[1fr_80px_100px_32px] gap-2 items-center">
-                <Select
-                  value={line.produto_id}
-                  onValueChange={(v) => updateLine(line.id, "produto_id", v)}
-                >
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Produto…" />
-                  </SelectTrigger>
+            <Label>Produtos</Label>
+            {lines.map((l, i) => (
+              <div key={i} className="grid grid-cols-[1fr_80px_90px_32px] gap-2 items-center">
+                <Select value={l.produto_id} onValueChange={(v) => {
+                  const prod = products.find((p) => p.id === v);
+                  setLine(i, "produto_id", v);
+                  if (prod) setLine(i, "preco_custo", String(prod.preco_custo));
+                }}>
+                  <SelectTrigger><SelectValue placeholder="Produto…" /></SelectTrigger>
                   <SelectContent>
                     {products.map((p) => (
                       <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
@@ -496,155 +301,109 @@ function CompraModal({
                 <Input
                   type="number"
                   min="1"
-                  className="h-9"
-                  placeholder="0"
-                  value={line.quantidade}
-                  onChange={(e) => updateLine(line.id, "quantidade", e.target.value)}
+                  placeholder="Qtd"
+                  value={l.quantidade}
+                  onChange={(e) => setLine(i, "quantidade", e.target.value)}
                 />
                 <Input
                   type="number"
                   min="0"
                   step="0.01"
-                  className="h-9"
-                  placeholder="0.00"
-                  value={line.preco_custo_unit}
-                  onChange={(e) => updateLine(line.id, "preco_custo_unit", e.target.value)}
+                  placeholder="€ custo"
+                  value={l.preco_custo}
+                  onChange={(e) => setLine(i, "preco_custo", e.target.value)}
                 />
                 <Button
-                  type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-9 w-9 text-muted-foreground hover:text-destructive"
                   disabled={lines.length === 1}
-                  onClick={() => removeLine(line.id)}
+                  onClick={() => removeLine(i)}
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 className="h-4 w-4 text-muted-foreground" />
                 </Button>
               </div>
             ))}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={addLine}
-              className="mt-1"
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              Adicionar linha
+            <Button variant="outline" size="sm" onClick={addLine}>
+              <Plus className="h-3 w-3 mr-1" /> Adicionar linha
             </Button>
           </div>
 
           {total > 0 && (
-            <div className="flex justify-end">
-              <p className="text-sm text-muted-foreground">
-                Total:{" "}
-                <span className="font-semibold text-foreground text-base">{eur(total)}</span>
-              </p>
-            </div>
+            <p className="text-sm text-right font-semibold">
+              Total: {eur(total)}
+            </p>
           )}
-
-          <DialogFooter className="gap-2 pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => { resetForm(); onClose(); }}
-              disabled={mutation.isPending}
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="submit"
-              disabled={mutation.isPending}
-              className="bg-accent text-accent-foreground hover:bg-accent/90"
-            >
-              {mutation.isPending ? "A guardar…" : "Registar Compra"}
-            </Button>
-          </DialogFooter>
-        </form>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button
+            className="bg-accent text-accent-foreground hover:bg-accent/90"
+            onClick={() => mutation.mutate()}
+            disabled={validLines.length === 0 || mutation.isPending}
+          >
+            {mutation.isPending ? "A guardar…" : "Guardar"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-// ─── Page ────────────────────────────────────────────────────────────────────
-
+// ── Page ──────────────────────────────────────────────────────────────────────
 function StockPage() {
-  const { data: rows = [], isLoading } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ["stock"],
     queryFn: fetchStockData,
   });
 
-  const { data: meta } = useQuery({
-    queryKey: ["stock-meta"],
-    queryFn: fetchCyclesAndProducts,
-  });
+  const rows = data?.rows ?? [];
+  const products = data?.products ?? [];
+  const cycles = data?.cycles ?? [];
 
   const [search, setSearch] = useState("");
   const [soAlertas, setSoAlertas] = useState(false);
-  const [page, setPage] = useState(0);
-
   const [ajusteOpen, setAjusteOpen] = useState(false);
   const [compraOpen, setCompraOpen] = useState(false);
 
-  const filtered = useMemo(() => {
-    return rows.filter((r) => {
-      if (search && !r.nome.toLowerCase().includes(search.toLowerCase())) return false;
-      if (soAlertas && r.stock_qg >= r.unidade_min_stock) return false;
-      return true;
-    });
-  }, [rows, search, soAlertas]);
+  const filtered = rows.filter((r) => {
+    if (soAlertas && r.stock_qg >= r.unidade_min_stock) return false;
+    if (search && !r.nome.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
 
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-  const pageData = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-
-  // KPIs
-  const totalActivos = rows.length;
-  const emAlerta = rows.filter(
-    (r) => r.stock_qg > 0 && r.stock_qg < r.unidade_min_stock
-  ).length;
-  const criticos = rows.filter((r) => r.stock_qg === 0).length;
-  const valorCusto = rows.reduce((s, r) => s + r.preco_custo * r.stock_qg, 0);
+  const ativos = rows.length;
+  const emAlerta = rows.filter((r) => r.stock_qg > 0 && r.stock_qg < r.unidade_min_stock).length;
+  const criticos = rows.filter((r) => r.stock_qg <= 0).length;
+  const valorTotal = rows.reduce((s, r) => s + r.stock_qg * r.preco_custo, 0);
 
   const kpis = [
-    { label: "Produtos Activos", value: isLoading ? "…" : totalActivos, icon: Package },
-    { label: "Em Alerta", value: isLoading ? "…" : emAlerta, icon: AlertTriangle },
-    { label: "Críticos (esgotados)", value: isLoading ? "…" : criticos, icon: XCircle },
-    {
-      label: "Valor em Stock (custo)",
-      value: isLoading ? "…" : eur(valorCusto),
-      icon: Coins,
-    },
+    { label: "Produtos com Stock", value: ativos, icon: Package },
+    { label: "Em Alerta", value: emAlerta, icon: AlertTriangle },
+    { label: "Críticos (stock=0)", value: criticos, icon: XCircle },
+    { label: "Valor Total em Stock", value: eur(valorTotal), icon: Coins },
   ];
-
-  function handleSearch(v: string) { setSearch(v); setPage(0); }
-  function handleSoAlertas(v: boolean) { setSoAlertas(v); setPage(0); }
 
   return (
     <div className="space-y-8">
-      <header className="flex items-start justify-between gap-4 flex-wrap">
+      <header className="flex items-start justify-between gap-4">
         <div>
           <p className="text-sm uppercase tracking-[0.2em] text-muted-foreground">Armazém</p>
           <h1 className="text-3xl md:text-4xl font-display font-semibold mt-1">Stock Central</h1>
-          <p className="text-muted-foreground mt-2">Inventário, compras e ajustes manuais.</p>
+          <p className="text-muted-foreground mt-2">Inventário e movimentos de stock.</p>
         </div>
-        <div className="flex gap-2 flex-wrap shrink-0">
-          <Button
-            variant="outline"
-            onClick={() => setAjusteOpen(true)}
-          >
-            Registar Ajuste
+        <div className="flex gap-2 mt-2 shrink-0">
+          <Button variant="outline" onClick={() => setAjusteOpen(true)}>
+            Ajuste Manual
           </Button>
           <Button
             className="bg-accent text-accent-foreground hover:bg-accent/90"
             onClick={() => setCompraOpen(true)}
           >
-            <Plus className="h-4 w-4 mr-2" />
-            Registar Compra
+            <Plus className="h-4 w-4 mr-2" /> Registar Compra
           </Button>
         </div>
       </header>
 
-      {/* KPIs */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map((k) => {
           const Icon = k.icon;
@@ -652,10 +411,10 @@ function StockPage() {
             <Card key={k.label} className="p-5">
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider">
-                    {k.label}
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">{k.label}</p>
+                  <p className="text-2xl font-display font-semibold mt-2">
+                    {isLoading ? "…" : k.value}
                   </p>
-                  <p className="text-2xl font-display font-semibold mt-2">{k.value}</p>
                 </div>
                 <div className="h-10 w-10 rounded-full bg-secondary text-primary flex items-center justify-center">
                   <Icon className="h-5 w-5" />
@@ -666,145 +425,72 @@ function StockPage() {
         })}
       </section>
 
-      {/* Filters */}
-      <section className="flex flex-wrap gap-3 items-center">
-        <Input
-          placeholder="Pesquisar por nome…"
-          value={search}
-          onChange={(e) => handleSearch(e.target.value)}
-          className="w-56"
-        />
-        <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
-          <Switch checked={soAlertas} onCheckedChange={handleSoAlertas} />
-          Só alertas
-        </label>
-        <span className="text-sm text-muted-foreground ml-auto">
-          {filtered.length} produto{filtered.length !== 1 ? "s" : ""}
-        </span>
-      </section>
+      <section className="space-y-4">
+        <div className="flex flex-wrap gap-3 items-center">
+          <Input
+            className="w-56"
+            placeholder="Pesquisar por nome…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+            <Switch checked={soAlertas} onCheckedChange={setSoAlertas} />
+            Só alertas
+          </label>
+        </div>
 
-      {/* Table */}
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
+        <Card className="overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow className="bg-primary hover:bg-primary">
-                <TableHead className="text-primary-foreground font-semibold">Nome</TableHead>
-                <TableHead className="text-primary-foreground font-semibold">Categoria</TableHead>
-                <TableHead className="text-primary-foreground font-semibold text-right">
-                  Stock QG
-                </TableHead>
-                <TableHead className="text-primary-foreground font-semibold text-right">
-                  Em Salões
-                </TableHead>
-                <TableHead className="text-primary-foreground font-semibold text-right">
-                  Mínimo
-                </TableHead>
-                <TableHead className="text-primary-foreground font-semibold text-right">
-                  Esgota em
-                </TableHead>
-                <TableHead className="text-primary-foreground font-semibold text-center">
-                  Status
-                </TableHead>
+                <TableHead className="text-primary-foreground">Nome</TableHead>
+                <TableHead className="text-primary-foreground">Categoria</TableHead>
+                <TableHead className="text-primary-foreground text-right">Stock QG</TableHead>
+                <TableHead className="text-primary-foreground text-right">Mínimo</TableHead>
+                <TableHead className="text-primary-foreground text-center">Status</TableHead>
+                <TableHead className="text-primary-foreground text-right">Esgota em</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell
-                    colSpan={7}
-                    className="text-center py-10 text-muted-foreground"
-                  >
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-10">
                     A carregar…
                   </TableCell>
                 </TableRow>
               )}
-              {!isLoading && pageData.length === 0 && (
+              {!isLoading && filtered.length === 0 && (
                 <TableRow>
-                  <TableCell
-                    colSpan={7}
-                    className="text-center py-10 text-muted-foreground"
-                  >
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-10">
                     Nenhum produto encontrado.
                   </TableCell>
                 </TableRow>
               )}
-              {pageData.map((r) => (
-                <TableRow key={r.id} className="hover:bg-muted/50 transition-colors">
+              {filtered.map((r) => (
+                <TableRow key={r.produto_id}>
                   <TableCell className="font-medium">{r.nome}</TableCell>
                   <TableCell className="text-muted-foreground">{r.categoria}</TableCell>
-                  <TableCell className="text-right tabular-nums font-semibold">
-                    {r.stock_qg}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">
-                    {r.em_saloes}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">
-                    {r.unidade_min_stock}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {r.esgota_em !== null ? (
-                      <span
-                        className={
-                          r.esgota_em <= 7
-                            ? "text-destructive font-semibold"
-                            : r.esgota_em <= 14
-                            ? "text-orange-500 font-medium"
-                            : ""
-                        }
-                      >
-                        {r.esgota_em}d
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
+                  <TableCell className="text-right">{r.stock_qg}</TableCell>
+                  <TableCell className="text-right">{r.unidade_min_stock}</TableCell>
                   <TableCell className="text-center">
-                    {statusBadge(r.stock_qg, r.unidade_min_stock)}
+                    <StatusBadge stock={r.stock_qg} min={r.unidade_min_stock} />
+                  </TableCell>
+                  <TableCell className="text-right text-muted-foreground">
+                    {r.esgota_dias !== null ? `${r.esgota_dias} dias` : "—"}
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-        </div>
+        </Card>
+      </section>
 
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t">
-            <span className="text-sm text-muted-foreground">
-              Página {page + 1} de {totalPages}
-            </span>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page === 0}
-                onClick={() => setPage((p) => p - 1)}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page >= totalPages - 1}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        )}
-      </Card>
-
-      <AjusteModal
-        open={ajusteOpen}
-        onClose={() => setAjusteOpen(false)}
-        products={meta?.products ?? []}
-      />
+      <AjusteModal open={ajusteOpen} onClose={() => setAjusteOpen(false)} products={products} />
       <CompraModal
         open={compraOpen}
         onClose={() => setCompraOpen(false)}
-        cycles={meta?.cycles ?? []}
-        products={meta?.products ?? []}
+        products={products}
+        cycles={cycles}
       />
     </div>
   );
