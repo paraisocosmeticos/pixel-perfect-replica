@@ -158,10 +158,11 @@ function NovaCompraModal({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label>Ciclo</Label>
-              <Select value={cycleId} onValueChange={setCycleId}>
+              <Select value={cycleId || "none"} onValueChange={(v) => setCycleId(v === "none" ? "" : v)}>
                 <SelectTrigger><SelectValue placeholder="Seleccionar ciclo…" /></SelectTrigger>
                 <SelectContent>
-                  {cycles.map((c) => (
+                  <SelectItem value="none">Sem ciclo</SelectItem>
+                  {cycles.filter((c) => c.id).map((c) => (
                     <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>
                   ))}
                 </SelectContent>
@@ -416,10 +417,10 @@ function ComprasPage() {
               {cycles.map((c) => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Select value={monthFilter} onValueChange={setMonthFilter}>
+          <Select value={monthFilter || "todos-meses"} onValueChange={(v) => setMonthFilter(v === "todos-meses" ? "" : v)}>
             <SelectTrigger className="w-40"><SelectValue placeholder="Todos os meses" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Todos os meses</SelectItem>
+              <SelectItem value="todos-meses">Todos os meses</SelectItem>
               {months.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
             </SelectContent>
           </Select>
