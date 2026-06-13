@@ -25,6 +25,14 @@ async function fetchCurrentUser(): Promise<CurrentUser | null> {
   console.log('ROLES DATA:', JSON.stringify(roles));
   console.log('ROLE ERROR:', rolesError);
 
+  // Token is stale/orphaned — profile doesn't exist in DB for this session user_id
+  if (!profile) {
+    console.log('INVALID SESSION: no profile for user_id', session.user.id, '— forcing signOut');
+    await supabase.auth.signOut();
+    window.location.href = '/auth';
+    return null;
+  }
+
   if (!roles || roles.length === 0) {
     await supabase.auth.signOut();
     window.location.href = '/auth';
