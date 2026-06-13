@@ -50,12 +50,16 @@ const CATEGORIAS = [
 const PAGE_SIZE = 20;
 
 function toSlug(s: string) {
-  return s
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
+  return (
+    s
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") +
+    "-" +
+    Date.now()
+  );
 }
 
 function eur(v: number) {
@@ -144,6 +148,7 @@ function ProductModal({
         unidade_min_stock: parseInt(form.unidade_min_stock),
         validade_meses: parseInt(form.validade_meses),
       };
+      console.log("INSERT DATA:", payload);
       if (product) {
         const { error } = await supabase.from("products").update(payload).eq("id", product.id);
         if (error) throw error;
