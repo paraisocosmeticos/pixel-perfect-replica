@@ -8,7 +8,9 @@ function createSupabaseClient() {
   const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || '')
     .replace(/\/rest\/v1\/?$/, '')
     .replace(/\/$/, '');
-  const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
+  // TEMP DEBUG: hardcoded anon key for djnbddubchvhlzsaglis to confirm Vercel
+  // is not injecting VITE_SUPABASE_PUBLISHABLE_KEY correctly. Revert once confirmed.
+  const SUPABASE_PUBLISHABLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRqbmJkZHViY2h2aGx6c2FnbGlzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0NjE3MjIsImV4cCI6MjA5NzAzNzcyMn0.0oNOhHbRODqNfw1YXllRNWyI5FpYdhz7CZLYIZO0ZW8';
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
     const missing = [
