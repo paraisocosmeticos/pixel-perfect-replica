@@ -20,6 +20,9 @@ function createSupabaseClient() {
     throw new Error(message);
   }
 
+  console.log('SUPABASE URL:', SUPABASE_URL?.substring(0, 40));
+  console.log('SUPABASE KEY:', SUPABASE_PUBLISHABLE_KEY?.substring(0, 40));
+
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     auth: {
       storage: typeof window !== 'undefined' ? localStorage : undefined,
