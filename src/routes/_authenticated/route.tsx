@@ -6,7 +6,12 @@ export const Route = createFileRoute("/_authenticated")({
   ssr: false,
   beforeLoad: async () => {
     const { data, error } = await supabase.auth.getUser();
-    if (error || !data.user) throw redirect({ to: "/auth" });
+    console.log('BEFORELOAD getUser ERROR:', JSON.stringify(error));
+    console.log('BEFORELOAD getUser DATA:', JSON.stringify(data));
+    if (error || !data.user) {
+      console.log('BEFORELOAD redirecting to /auth — auto-signOut disabled for debug');
+      throw redirect({ to: "/auth" });
+    }
     return { user: data.user };
   },
   component: () => (
