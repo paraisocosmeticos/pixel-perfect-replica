@@ -34,10 +34,9 @@ async function fetchCurrentUser(): Promise<CurrentUser | null> {
     console.log('NO ROLES for user_id', session.user.id, '(auto-signOut disabled for debug)');
   }
 
-  const role = (
-    roles.some((r) => r.role === "admin") ||
-    session.user.email === "90moser@gmail.com"
-  ) ? "admin" : "representante" as "admin" | "representante";
+  const role = roles.some((r) => r.role === "admin")
+    ? "admin"
+    : "representante" as "admin" | "representante";
   console.log('FETCH ROLE RESULT:', role, roles);
   return {
     id: session.user.id,
