@@ -44,7 +44,9 @@ function AuthPage() {
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    console.log('LOGIN ERROR:', JSON.stringify(error));
+    console.log('LOGIN DATA:', JSON.stringify(data));
     setLoading(false);
     if (error) {
       toast.error("Não foi possível entrar", { description: error.message });
