@@ -38,6 +38,7 @@ type Visit = { id: string; data: string; notas: string | null; representante_id:
 type Transfer = { id: string; data: string; quantidade: number; nota: string | null; produto_id: string };
 type SalonSale = { id: string; data: string; preco_final: number; quantidade: number; comissao_salao: number; produto_id: string };
 type Return = { id: string; data: string; quantidade: number; motivo: string | null; produto_id: string };
+type StockCentral = { produto_id: string; stock_qg: number };
 
 function eur(v: number) {
   return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(v);
@@ -71,6 +72,7 @@ async function fetchSaloesData() {
     { data: transfers },
     { data: sales },
     { data: products },
+    { data: returns },
   ] = await Promise.all([
     supabase.from("salons").select("*").order("nome"),
     supabase.from("user_roles").select("user_id,role").eq("role", "representante"),
@@ -78,6 +80,7 @@ async function fetchSaloesData() {
     supabase.from("transfers").select("*").gte("data", monthStart),
     supabase.from("salon_sales").select("*").order("data", { ascending: false }),
     supabase.from("products").select("id,nome"),
+    supabase.from("returns").select("*").order("data", { ascending: false }),
   ]);
 
   // fetch profiles for reps
@@ -117,6 +120,7 @@ async function fetchSaloesData() {
     visits: (visits ?? []) as (Visit & { salon_id: string })[],
     transfers: (transfers ?? []) as (Transfer & { salon_id: string })[],
     sales: (sales ?? []) as (SalonSale & { salon_id: string })[],
+    returns: (returns ?? []) as (Return & { salon_id: string })[],
     lastVisitMap,
     lateCount,
     pendingCommissions,
@@ -192,6 +196,215 @@ function VisitModal({
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
           <Button className="bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
             {mutation.isPending ? "A guardar…" : "Guardar"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Transfer Modal ────────────────────────────────────────────────────────────
+function TransferModal({
+  open,
+  onClose,
+  salonId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  salonId: string;
+}) {
+  const qc = useQueryClient();
+  const [produtoId, setProdutoId] = useState("");
+  const [quantidade, setQuantidade] = useState(1);
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
+  const [nota, setNota] = useState("");
+
+  const { data: products } = useQuery({
+    queryKey: ["active-products"],
+    queryFn: () => supabase.from("products").select("id,nome").eq("ativo", true).order("nome").then((r) => r.data ?? []),
+  });
+  const { data: stock } = useQuery({
+    queryKey: ["stock-central"],
+    queryFn: () => supabase.from("stock_central").select("produto_id,stock_qg").then((r) => r.data ?? []),
+  });
+
+  useEffect(() => {
+    if (open) { setProdutoId(""); setQuantidade(1); setData(new Date().toISOString().slice(0, 10)); setNota(""); }
+  }, [open]);
+
+  const stockMap = new Map((stock ?? []).map((s: StockCentral) => [s.produto_id, s.stock_qg]));
+  const stockQg = produtoId ? (stockMap.get(produtoId) ?? 0) : null;
+  const qtdInvalid = stockQg !== null && quantidade > stockQg;
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const { error } = await supabase.from("transfers").insert({
+        salon_id: salonId,
+        produto_id: produtoId,
+        quantidade,
+        data,
+        nota: nota.trim() || null,
+        representante_id: null,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["saloes"] });
+      qc.invalidateQueries({ queryKey: ["stock-central"] });
+      toast.success("Transferência registada.");
+      onClose();
+    },
+    onError: (e: any) => toast.error("Erro", { description: e.message }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Nova Transferência</DialogTitle></DialogHeader>
+        <div className="space-y-4 py-2">
+          <div className="space-y-1">
+            <Label>Produto</Label>
+            <Select value={produtoId} onValueChange={setProdutoId}>
+              <SelectTrigger><SelectValue placeholder="Seleccionar produto…" /></SelectTrigger>
+              <SelectContent>
+                {(products ?? []).map((p: any) => {
+                  const sq = stockMap.get(p.id) ?? 0;
+                  return (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.nome} <span className="text-muted-foreground ml-1">(QG: {sq})</span>
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Quantidade</Label>
+            <Input
+              type="number"
+              min={1}
+              max={stockQg ?? undefined}
+              value={quantidade}
+              onChange={(e) => setQuantidade(Math.max(1, parseInt(e.target.value) || 1))}
+            />
+            {qtdInvalid && (
+              <p className="text-xs text-red-500">Stock no QG insuficiente ({stockQg} disponível).</p>
+            )}
+            {stockQg !== null && !qtdInvalid && produtoId && (
+              <p className="text-xs text-muted-foreground">Stock QG disponível: {stockQg}</p>
+            )}
+          </div>
+          <div className="space-y-1">
+            <Label>Data</Label>
+            <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label>Nota <span className="text-muted-foreground">(opcional)</span></Label>
+            <Textarea value={nota} onChange={(e) => setNota(e.target.value)} rows={2} placeholder="Observações…" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button
+            className="bg-accent text-accent-foreground hover:bg-accent/90"
+            onClick={() => mutation.mutate()}
+            disabled={!produtoId || qtdInvalid || mutation.isPending}
+          >
+            {mutation.isPending ? "A guardar…" : "Confirmar"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Devolução Modal ───────────────────────────────────────────────────────────
+function DevolucaoModal({
+  open,
+  onClose,
+  salonId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  salonId: string;
+}) {
+  const qc = useQueryClient();
+  const [produtoId, setProdutoId] = useState("");
+  const [quantidade, setQuantidade] = useState(1);
+  const [motivo, setMotivo] = useState("");
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
+
+  const { data: products } = useQuery({
+    queryKey: ["active-products"],
+    queryFn: () => supabase.from("products").select("id,nome").eq("ativo", true).order("nome").then((r) => r.data ?? []),
+  });
+
+  useEffect(() => {
+    if (open) { setProdutoId(""); setQuantidade(1); setMotivo(""); setData(new Date().toISOString().slice(0, 10)); }
+  }, [open]);
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.from("returns").insert({
+        salon_id: salonId,
+        produto_id: produtoId,
+        quantidade,
+        motivo: motivo.trim(),
+        data,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["saloes"] });
+      toast.success("Devolução registada.");
+      onClose();
+    },
+    onError: (e: any) => toast.error("Erro", { description: e.message }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Nova Devolução</DialogTitle></DialogHeader>
+        <div className="space-y-4 py-2">
+          <div className="space-y-1">
+            <Label>Produto</Label>
+            <Select value={produtoId} onValueChange={setProdutoId}>
+              <SelectTrigger><SelectValue placeholder="Seleccionar produto…" /></SelectTrigger>
+              <SelectContent>
+                {(products ?? []).map((p: any) => (
+                  <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label>Quantidade</Label>
+            <Input
+              type="number"
+              min={1}
+              value={quantidade}
+              onChange={(e) => setQuantidade(Math.max(1, parseInt(e.target.value) || 1))}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label>Motivo</Label>
+            <Textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} rows={2} placeholder="Motivo da devolução…" />
+          </div>
+          <div className="space-y-1">
+            <Label>Data</Label>
+            <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button
+            className="bg-accent text-accent-foreground hover:bg-accent/90"
+            onClick={() => mutation.mutate()}
+            disabled={!produtoId || !motivo.trim() || mutation.isPending}
+          >
+            {mutation.isPending ? "A guardar…" : "Confirmar"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -319,12 +532,15 @@ function SalonSheet({
 }) {
   const [visitOpen, setVisitOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [devolucaoOpen, setDevolucaoOpen] = useState(false);
 
   if (!salon || !d) return null;
 
   const salonVisits = d.visits.filter((v) => v.salon_id === salon.id);
   const salonTransfers = d.transfers.filter((t) => t.salon_id === salon.id);
   const salonSales = d.sales.filter((s) => s.salon_id === salon.id);
+  const salonReturns = d.returns.filter((r) => r.salon_id === salon.id);
 
   const monthSales = salonSales.filter((s) => s.data >= d.monthStart);
   const monthRevenue = monthSales.reduce((sum, s) => sum + Number(s.preco_final), 0);
@@ -381,6 +597,11 @@ function SalonSheet({
             </TabsList>
 
             <TabsContent value="transferencias">
+              <div className="flex justify-end mb-3">
+                <Button size="sm" className="bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => setTransferOpen(true)}>
+                  <Plus className="h-3 w-3 mr-1" /> Nova Transferência
+                </Button>
+              </div>
               {salonTransfers.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Sem transferências este mês.</p>
               ) : (
@@ -431,7 +652,35 @@ function SalonSheet({
             </TabsContent>
 
             <TabsContent value="devolucoes">
-              <p className="text-sm text-muted-foreground">Sem devoluções registadas.</p>
+              <div className="flex justify-end mb-3">
+                <Button size="sm" className="bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => setDevolucaoOpen(true)}>
+                  <Plus className="h-3 w-3 mr-1" /> Nova Devolução
+                </Button>
+              </div>
+              {salonReturns.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Sem devoluções registadas.</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-primary hover:bg-primary">
+                      <TableHead className="text-primary-foreground">Data</TableHead>
+                      <TableHead className="text-primary-foreground">Produto</TableHead>
+                      <TableHead className="text-primary-foreground text-right">Qtd</TableHead>
+                      <TableHead className="text-primary-foreground">Motivo</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {salonReturns.map((r) => (
+                      <TableRow key={r.id}>
+                        <TableCell>{fmtDate(r.data)}</TableCell>
+                        <TableCell>{d.prodMap.get(r.produto_id) ?? r.produto_id}</TableCell>
+                        <TableCell className="text-right">{r.quantidade}</TableCell>
+                        <TableCell className="text-muted-foreground text-sm">{r.motivo ?? "—"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </TabsContent>
 
             <TabsContent value="visitas">
@@ -457,6 +706,8 @@ function SalonSheet({
 
       <VisitModal open={visitOpen} onClose={() => setVisitOpen(false)} salonId={salon.id} />
       <SalonModal open={editOpen} onClose={() => setEditOpen(false)} salon={salon} reps={d.repList} />
+      <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} salonId={salon.id} />
+      <DevolucaoModal open={devolucaoOpen} onClose={() => setDevolucaoOpen(false)} salonId={salon.id} />
     </>
   );
 }
