@@ -9,9 +9,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Receipt, ShoppingCart, Calendar, Sparkles, Plus, Trash2 } from "lucide-react";
+import { Receipt, ShoppingCart, Calendar, Sparkles, Plus, Trash2, ChevronsUpDown, Check } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/compras")({
   head: () => ({ meta: [{ title: "Compras — Secrets VIP" }] }),
@@ -86,6 +89,68 @@ async function fetchComprasData() {
   };
 }
 
+// ── Product Combobox ──────────────────────────────────────────────────────────
+function ProductCombobox({
+  value,
+  onChange,
+  products,
+}: {
+  value: string;
+  onChange: (id: string, custo: number) => void;
+  products: Product[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const filtered = products.filter((p) =>
+    p.nome.toLowerCase().includes(search.toLowerCase()),
+  );
+  const selected = products.find((p) => p.id === value);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          className="w-full justify-between font-normal truncate"
+        >
+          <span className="truncate">{selected ? selected.nome : "Produto…"}</span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[320px] p-0" align="start">
+        <Command shouldFilter={false}>
+          <CommandInput
+            placeholder="Pesquisar produto…"
+            value={search}
+            onValueChange={setSearch}
+          />
+          <CommandList>
+            <CommandEmpty>Nenhum produto encontrado.</CommandEmpty>
+            <CommandGroup>
+              {filtered.map((p) => (
+                <CommandItem
+                  key={p.id}
+                  value={p.id}
+                  onSelect={() => {
+                    onChange(p.id, p.preco_custo);
+                    setSearch("");
+                    setOpen(false);
+                  }}
+                >
+                  <Check className={cn("mr-2 h-4 w-4 shrink-0", value === p.id ? "opacity-100" : "opacity-0")} />
+                  <span className="text-sm">{p.nome}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // ── Nova Compra Modal ─────────────────────────────────────────────────────────
 type PurchaseLine = { produto_id: string; quantidade: string; preco_custo: string };
 
@@ -124,7 +189,7 @@ function NovaCompraModal({
   }, 0);
 
   const validLines = lines.filter(
-    (l) => l.produto_id && parseInt(l.quantidade) > 0 && parseFloat(l.preco_custo) > 0,
+    (l) => l.produto_id && parseInt(l.quantidade) > 0 && l.preco_custo !== "" && !isNaN(parseFloat(l.preco_custo)) && parseFloat(l.preco_custo) >= 0,
   );
 
   const mutation = useMutation({
@@ -178,18 +243,14 @@ function NovaCompraModal({
             <Label>Produtos</Label>
             {lines.map((l, i) => (
               <div key={i} className="grid grid-cols-[1fr_80px_90px_32px] gap-2 items-center">
-                <Select value={l.produto_id} onValueChange={(v) => {
-                  const prod = products.find((p) => p.id === v);
-                  setLine(i, "produto_id", v);
-                  if (prod) setLine(i, "preco_custo", String(prod.preco_custo));
-                }}>
-                  <SelectTrigger><SelectValue placeholder="Produto…" /></SelectTrigger>
-                  <SelectContent>
-                    {products.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <ProductCombobox
+                  value={l.produto_id}
+                  products={products}
+                  onChange={(id, custo) => {
+                    setLine(i, "produto_id", id);
+                    setLine(i, "preco_custo", String(custo));
+                  }}
+                />
                 <Input
                   type="number" min="1" placeholder="Qtd"
                   value={l.quantidade}

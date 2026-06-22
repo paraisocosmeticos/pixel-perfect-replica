@@ -77,7 +77,7 @@ async function fetchSaloesData() {
     supabase.from("salons").select("*").order("nome"),
     supabase.from("user_roles").select("user_id,role").eq("role", "representante"),
     supabase.from("salon_visit_log").select("*").order("data", { ascending: false }),
-    supabase.from("transfers").select("*").gte("data", monthStart),
+    supabase.from("transfers").select("*").order("data", { ascending: false }),
     supabase.from("salon_sales").select("*").order("data", { ascending: false }),
     supabase.from("products").select("id,nome"),
     supabase.from("returns").select("*").order("data", { ascending: false }),
@@ -542,6 +542,22 @@ function SalonSheet({
   const salonSales = d.sales.filter((s) => s.salon_id === salon.id);
   const salonReturns = d.returns.filter((r) => r.salon_id === salon.id);
 
+  // Stock no salão = transferências - vendas - devoluções, por produto
+  const stockMap = new Map<string, number>();
+  for (const t of salonTransfers) {
+    stockMap.set(t.produto_id, (stockMap.get(t.produto_id) ?? 0) + t.quantidade);
+  }
+  for (const s of salonSales) {
+    stockMap.set(s.produto_id, (stockMap.get(s.produto_id) ?? 0) - s.quantidade);
+  }
+  for (const r of salonReturns) {
+    stockMap.set(r.produto_id, (stockMap.get(r.produto_id) ?? 0) - r.quantidade);
+  }
+  const salonStock = Array.from(stockMap.entries())
+    .map(([produto_id, qty]) => ({ produto_id, qty }))
+    .filter((s) => s.qty !== 0)
+    .sort((a, b) => b.qty - a.qty);
+
   const monthSales = salonSales.filter((s) => s.data >= d.monthStart);
   const monthRevenue = monthSales.reduce((sum, s) => sum + Number(s.preco_final), 0);
   const pendingComm = salonSales.reduce((sum, s) => sum + Number(s.comissao_salao ?? 0), 0);
@@ -588,13 +604,39 @@ function SalonSheet({
             ))}
           </div>
 
-          <Tabs defaultValue="visitas">
-            <TabsList className="w-full grid grid-cols-4 mb-4">
-              <TabsTrigger value="transferencias">Transfer.</TabsTrigger>
+          <Tabs defaultValue="stock">
+            <TabsList className="w-full grid grid-cols-5 mb-4">
+              <TabsTrigger value="stock">Stock</TabsTrigger>
+              <TabsTrigger value="transferencias">Transf.</TabsTrigger>
               <TabsTrigger value="vendas">Vendas</TabsTrigger>
               <TabsTrigger value="devolucoes">Devol.</TabsTrigger>
               <TabsTrigger value="visitas">Visitas</TabsTrigger>
             </TabsList>
+
+            <TabsContent value="stock">
+              {salonStock.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Sem stock registado neste salão.</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-primary hover:bg-primary">
+                      <TableHead className="text-primary-foreground">Produto</TableHead>
+                      <TableHead className="text-primary-foreground text-right">Qtd em Salão</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {salonStock.map(({ produto_id, qty }) => (
+                      <TableRow key={produto_id}>
+                        <TableCell className="font-medium">{d.prodMap.get(produto_id) ?? produto_id}</TableCell>
+                        <TableCell className={`text-right font-semibold ${qty < 0 ? "text-red-500" : ""}`}>
+                          {qty}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </TabsContent>
 
             <TabsContent value="transferencias">
               <div className="flex justify-end mb-3">
