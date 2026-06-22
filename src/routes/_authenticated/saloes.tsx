@@ -324,10 +324,14 @@ function DevolucaoModal({
   open,
   onClose,
   salonId,
+  salonStock,
+  prodMap,
 }: {
   open: boolean;
   onClose: () => void;
   salonId: string;
+  salonStock: { produto_id: string; qty: number }[];
+  prodMap: Map<string, string>;
 }) {
   const qc = useQueryClient();
   const [produtoId, setProdutoId] = useState("");
@@ -335,10 +339,10 @@ function DevolucaoModal({
   const [motivo, setMotivo] = useState("");
   const [data, setData] = useState(new Date().toISOString().slice(0, 10));
 
-  const { data: products } = useQuery({
-    queryKey: ["active-products"],
-    queryFn: () => supabase.from("products").select("id,nome").eq("ativo", true).order("nome").then((r) => r.data ?? []),
-  });
+  // Só produtos com stock > 0 no salão
+  const availableProducts = salonStock.filter((s) => s.qty > 0);
+  const selectedStock = salonStock.find((s) => s.produto_id === produtoId)?.qty ?? 0;
+  const qtdInvalid = quantidade > selectedStock;
 
   useEffect(() => {
     if (open) { setProdutoId(""); setQuantidade(1); setMotivo(""); setData(new Date().toISOString().slice(0, 10)); }
@@ -370,11 +374,17 @@ function DevolucaoModal({
         <div className="space-y-4 py-2">
           <div className="space-y-1">
             <Label>Produto</Label>
-            <Select value={produtoId} onValueChange={setProdutoId}>
+            <Select value={produtoId} onValueChange={(v) => { setProdutoId(v); setQuantidade(1); }}>
               <SelectTrigger><SelectValue placeholder="Seleccionar produto…" /></SelectTrigger>
               <SelectContent>
-                {(products ?? []).map((p: any) => (
-                  <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
+                {availableProducts.length === 0 && (
+                  <SelectItem value="none" disabled>Sem stock disponível neste salão</SelectItem>
+                )}
+                {availableProducts.map((s) => (
+                  <SelectItem key={s.produto_id} value={s.produto_id}>
+                    {prodMap.get(s.produto_id) ?? s.produto_id}
+                    <span className="text-muted-foreground ml-1">(Stock: {s.qty})</span>
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -384,9 +394,16 @@ function DevolucaoModal({
             <Input
               type="number"
               min={1}
+              max={selectedStock || undefined}
               value={quantidade}
               onChange={(e) => setQuantidade(Math.max(1, parseInt(e.target.value) || 1))}
             />
+            {produtoId && qtdInvalid && (
+              <p className="text-xs text-red-500">Quantidade superior ao stock disponível ({selectedStock}).</p>
+            )}
+            {produtoId && !qtdInvalid && (
+              <p className="text-xs text-muted-foreground">Stock disponível neste salão: {selectedStock}</p>
+            )}
           </div>
           <div className="space-y-1">
             <Label>Motivo</Label>
@@ -402,7 +419,7 @@ function DevolucaoModal({
           <Button
             className="bg-accent text-accent-foreground hover:bg-accent/90"
             onClick={() => mutation.mutate()}
-            disabled={!produtoId || !motivo.trim() || mutation.isPending}
+            disabled={!produtoId || !motivo.trim() || qtdInvalid || mutation.isPending}
           >
             {mutation.isPending ? "A guardar…" : "Confirmar"}
           </Button>
@@ -749,7 +766,7 @@ function SalonSheet({
       <VisitModal open={visitOpen} onClose={() => setVisitOpen(false)} salonId={salon.id} />
       <SalonModal open={editOpen} onClose={() => setEditOpen(false)} salon={salon} reps={d.repList} />
       <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} salonId={salon.id} />
-      <DevolucaoModal open={devolucaoOpen} onClose={() => setDevolucaoOpen(false)} salonId={salon.id} />
+      <DevolucaoModal open={devolucaoOpen} onClose={() => setDevolucaoOpen(false)} salonId={salon.id} salonStock={salonStock} prodMap={d.prodMap} />
     </>
   );
 }
