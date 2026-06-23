@@ -350,10 +350,57 @@ function RepSheet({
 
 // ── Nova Rep Modal ────────────────────────────────────────────────────────────
 function NovaRepModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => { if (open) { setNome(""); setEmail(""); } }, [open]);
+  useEffect(() => {
+    if (open) { setNome(""); setEmail(""); setPassword(""); }
+  }, [open]);
+
+  async function handleCreate() {
+    if (!nome.trim() || !email.trim() || password.length < 6) return;
+    setLoading(true);
+    try {
+      // Save current admin session before signUp (which may replace it if auto-confirm is on)
+      const { data: { session: adminSession } } = await supabase.auth.getSession();
+
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: { data: { nome: nome.trim() } },
+      });
+      if (signUpError) throw signUpError;
+
+      const newUserId = signUpData.user?.id;
+      if (!newUserId) throw new Error("Conta criada mas ID não devolvido.");
+
+      // Restore admin session in case signUp replaced it
+      if (adminSession) {
+        await supabase.auth.setSession({
+          access_token: adminSession.access_token,
+          refresh_token: adminSession.refresh_token,
+        });
+      }
+
+      // Upsert profile and role (in case handle_new_user trigger didn't run)
+      await supabase.from("profiles").upsert({ id: newUserId, nome: nome.trim(), email: email.trim() }, { onConflict: "id" });
+      const { error: roleError } = await supabase.from("user_roles").upsert({ user_id: newUserId, role: "representante" }, { onConflict: "user_id" });
+      if (roleError) throw roleError;
+
+      qc.invalidateQueries({ queryKey: ["representantes"] });
+      toast.success("Conta criada.", {
+        description: "A representante deve fazer login e alterar a password.",
+      });
+      onClose();
+    } catch (e: any) {
+      toast.error("Erro ao criar conta", { description: e.message });
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
@@ -361,30 +408,30 @@ function NovaRepModal({ open, onClose }: { open: boolean; onClose: () => void })
         <DialogHeader><DialogTitle>Nova Representante</DialogTitle></DialogHeader>
         <div className="space-y-4 py-2">
           <div className="space-y-1">
-            <Label>Nome</Label>
+            <Label>Nome completo</Label>
             <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome completo" />
           </div>
           <div className="space-y-1">
             <Label>Email</Label>
             <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@exemplo.com" />
           </div>
-          {nome && email && (
-            <div className="rounded-md bg-muted p-3 text-sm space-y-2">
-              <p className="font-semibold">Passos para criar a conta:</p>
-              <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
-                <li>Vai ao Supabase → Authentication → Users → Add user</li>
-                <li>Preenche o email: <span className="font-mono text-foreground">{email}</span></li>
-                <li>Após criado, corre no SQL Editor:</li>
-              </ol>
-              <pre className="bg-background rounded p-2 text-xs overflow-x-auto mt-1">{`UPDATE public.user_roles SET role = 'representante'
-WHERE user_id = (
-  SELECT id FROM auth.users WHERE email = '${email}'
-);`}</pre>
-            </div>
-          )}
+          <div className="space-y-1">
+            <Label>Password temporária</Label>
+            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" />
+            {password.length > 0 && password.length < 6 && (
+              <p className="text-xs text-red-500">Password deve ter pelo menos 6 caracteres.</p>
+            )}
+          </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Fechar</Button>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button
+            className="bg-accent text-accent-foreground hover:bg-accent/90"
+            onClick={handleCreate}
+            disabled={!nome.trim() || !email.trim() || password.length < 6 || loading}
+          >
+            {loading ? "A criar…" : "Criar Conta"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
