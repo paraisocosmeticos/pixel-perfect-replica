@@ -75,7 +75,7 @@ async function fetchSaloesData() {
     { data: returns },
   ] = await Promise.all([
     supabase.from("salons").select("*").order("nome"),
-    supabase.from("user_roles").select("user_id,role").eq("role", "representante"),
+    supabase.from("user_roles").select("user_id, role, profiles(id, nome)").eq("role", "representante"),
     supabase.from("salon_visit_log").select("*").order("data", { ascending: false }),
     supabase.from("transfers").select("*").order("data", { ascending: false }),
     supabase.from("salon_sales").select("*").order("data", { ascending: false }),
@@ -83,13 +83,10 @@ async function fetchSaloesData() {
     supabase.from("returns").select("*").order("data", { ascending: false }),
   ]);
 
-  // fetch profiles for reps
-  const repIds = (reps ?? []).map((r: any) => r.user_id);
-  const { data: profiles } = repIds.length
-    ? await supabase.from("profiles").select("id,nome").in("id", repIds)
-    : { data: [] };
-
-  const repList: Rep[] = (profiles ?? []).map((p: any) => ({ id: p.id, nome: p.nome }));
+  const repList: Rep[] = (reps ?? [])
+    .map((r: any) => r.profiles)
+    .filter(Boolean)
+    .map((p: any) => ({ id: p.id, nome: p.nome }));
   const repMap = new Map(repList.map((r) => [r.id, r.nome]));
   const prodMap = new Map((products ?? []).map((p: any) => [p.id, p.nome]));
 
