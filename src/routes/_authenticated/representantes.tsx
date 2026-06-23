@@ -52,21 +52,22 @@ function daysSince(d: string) {
 async function fetchRepData() {
   const monthStart = new Date(new Date().setDate(1)).toISOString().slice(0, 10);
 
-  const [{ data: rolesWithProfiles, error: repsError }, { data: salons }, { data: salonSales }, { data: directSales }, { data: visits }] =
+  const [{ data: roles }, { data: salons }, { data: salonSales }, { data: directSales }, { data: visits }] =
     await Promise.all([
-      supabase.from("user_roles").select("user_id, role, profiles(id, nome, email)").eq("role", "representante"),
+      supabase.from("user_roles").select("user_id").eq("role", "representante"),
       supabase.from("salons").select("id,nome,representante_id").eq("ativo", true).order("nome"),
       supabase.from("salon_sales").select("*").gte("data", monthStart),
       supabase.from("rep_direct_sales").select("*").gte("data", monthStart),
       supabase.from("salon_visit_log").select("*").gte("data", monthStart).order("data", { ascending: false }),
     ]);
 
-  console.log('REPS DATA:', rolesWithProfiles, 'ERROR:', repsError);
+  const userIds = (roles ?? []).map((r: any) => r.user_id);
+  const { data: profiles } = userIds.length
+    ? await supabase.from("profiles").select("id,nome,email").in("id", userIds)
+    : { data: [] };
+  console.log('PROFILES:', profiles);
 
-  const reps: Rep[] = (rolesWithProfiles ?? [])
-    .map((r: any) => r.profiles)
-    .filter(Boolean)
-    .map((p: any) => ({ id: p.id, nome: p.nome, email: p.email }));
+  const reps: Rep[] = (profiles ?? []).map((p: any) => ({ id: p.id, nome: p.nome, email: p.email }));
   const prodIds = [
     ...new Set([
       ...(salonSales ?? []).map((s: any) => s.produto_id),
