@@ -62,16 +62,33 @@ function safeStr(v: unknown): string {
   return "—";
 }
 
+// Detects objects sneaking into JSX and logs them instead of crashing
+function sc(label: string, v: unknown): string {
+  if (v !== null && typeof v === "object") {
+    console.error(`[#310] Object as child detected in field "${label}":`, JSON.stringify(v));
+    return `[OBJECT: ${label}]`;
+  }
+  if (v == null) return "—";
+  return String(v);
+}
+
 // ── ErrorBoundary ─────────────────────────────────────────────────────────────
-class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   constructor(props: any) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(e: Error) { return { error: e.message }; }
+  static getDerivedStateFromError(e: Error) { return { error: e }; }
+  componentDidCatch(e: Error, info: any) {
+    console.error('SHEET ERROR (componentDidCatch):', e);
+    console.error('SHEET ERROR stack:', e.stack);
+    console.error('SHEET componentStack:', info?.componentStack);
+  }
   render() {
     if (this.state.error) {
+      const e = this.state.error;
       return (
-        <div className="p-4 text-sm text-red-500 border border-red-200 rounded">
+        <div className="p-4 text-sm text-red-500 border border-red-200 rounded space-y-1">
           <p className="font-semibold">Erro ao abrir ficha</p>
-          <p className="font-mono text-xs mt-1">{this.state.error}</p>
+          <p className="font-mono text-xs">{String(e)}</p>
+          <p className="font-mono text-xs whitespace-pre-wrap">{e.stack}</p>
           <button className="mt-2 underline" onClick={() => this.setState({ error: null })}>Fechar</button>
         </div>
       );
@@ -201,6 +218,15 @@ function RepSheet({
   const qc = useQueryClient();
   const [assignOpen, setAssignOpen] = useState(false);
 
+  // ── DIAGNOSTIC LOGS ──────────────────────────────────────────────────────
+  console.log('REP DATA:', JSON.stringify(rep, null, 2));
+  console.log('QUERY RESULT d.reps:', JSON.stringify(d?.reps));
+  console.log('QUERY RESULT d.salons:', JSON.stringify(d?.salons?.slice(0, 2)));
+  console.log('QUERY RESULT d.salonSales:', JSON.stringify(d?.salonSales?.slice(0, 2)));
+  console.log('QUERY RESULT d.directSales:', JSON.stringify(d?.directSales?.slice(0, 2)));
+  console.log('QUERY RESULT d.visits:', JSON.stringify(d?.visits?.slice(0, 2)));
+  // ─────────────────────────────────────────────────────────────────────────
+
   if (!rep || !d) return null;
 
   const mySalons = d.salons.filter((s) => s.representante_id === rep.id);
@@ -234,8 +260,8 @@ function RepSheet({
                 {initials(rep.nome)}
               </div>
               <div>
-                <SheetTitle>{rep.nome ?? "—"}</SheetTitle>
-                <p className="text-sm text-muted-foreground">{rep.email ?? "—"}</p>
+                <SheetTitle>{sc("rep.nome", rep.nome)}</SheetTitle>
+                <p className="text-sm text-muted-foreground">{sc("rep.email", rep.email)}</p>
               </div>
             </div>
           </SheetHeader>
@@ -272,7 +298,7 @@ function RepSheet({
                   return (
                     <div key={s.id} className="flex items-center justify-between gap-2 py-2 border-b last:border-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium">{s.nome ?? "—"}</span>
+                        <span className="text-sm font-medium">{sc("salon.nome", s.nome)}</span>
                         {late
                           ? <Badge className="bg-red-600 text-white hover:bg-red-600 text-xs">Atraso</Badge>
                           : <Badge className="bg-green-600 text-white hover:bg-green-600 text-xs">Em dia</Badge>}
@@ -305,9 +331,9 @@ function RepSheet({
                     <TableBody>
                       {mySalonSales.map((s) => (
                         <TableRow key={s.id}>
-                          <TableCell>{s.data ? fmtDate(s.data) : "—"}</TableCell>
-                          <TableCell>{d.salonMap[s.salon_id] ?? "—"}</TableCell>
-                          <TableCell>{d.prodMap[s.produto_id] ?? "—"}</TableCell>
+                          <TableCell>{sc("salonSale.data", s.data ? fmtDate(s.data) : "—")}</TableCell>
+                          <TableCell>{sc("salonMap.salon_id", d.salonMap[s.salon_id])}</TableCell>
+                          <TableCell>{sc("prodMap.produto_id", d.prodMap[s.produto_id])}</TableCell>
                           <TableCell className="text-right">{eur(Number(s.preco_final) || 0)}</TableCell>
                           <TableCell className="text-right">{eur(Number(s.comissao_rep) || 0)}</TableCell>
                         </TableRow>
@@ -333,9 +359,9 @@ function RepSheet({
                     <TableBody>
                       {myDirectSales.map((s) => (
                         <TableRow key={s.id}>
-                          <TableCell>{s.data ? fmtDate(s.data) : "—"}</TableCell>
-                          <TableCell>{d.prodMap[s.produto_id] ?? "—"}</TableCell>
-                          <TableCell>{s.cliente_nome ?? "—"}</TableCell>
+                          <TableCell>{sc("directSale.data", s.data ? fmtDate(s.data) : "—")}</TableCell>
+                          <TableCell>{sc("prodMap.produto_id(direct)", d.prodMap[s.produto_id])}</TableCell>
+                          <TableCell>{sc("cliente_nome", s.cliente_nome)}</TableCell>
                           <TableCell className="text-right">{eur(Number(s.preco_final) || 0)}</TableCell>
                           <TableCell className="text-right">{eur(Number(s.comissao_rep) || 0)}</TableCell>
                         </TableRow>
@@ -352,10 +378,10 @@ function RepSheet({
                     {myVisits.map((v) => (
                       <Card key={v.id} className="p-3">
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium">{v.data ? fmtDate(v.data) : "—"}</span>
-                          <span className="text-xs text-muted-foreground">{d.salonMap[v.salon_id] ?? "—"}</span>
+                          <span className="text-sm font-medium">{sc("visit.data", v.data ? fmtDate(v.data) : "—")}</span>
+                          <span className="text-xs text-muted-foreground">{sc("salonMap.visit.salon_id", d.salonMap[v.salon_id])}</span>
                         </div>
-                        {v.notas && <p className="text-xs text-muted-foreground mt-1">{v.notas}</p>}
+                        {v.notas && <p className="text-xs text-muted-foreground mt-1">{sc("visit.notas", v.notas)}</p>}
                       </Card>
                     ))}
                   </div>
