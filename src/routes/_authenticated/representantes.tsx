@@ -52,22 +52,18 @@ function daysSince(d: string) {
 async function fetchRepData() {
   const monthStart = new Date(new Date().setDate(1)).toISOString().slice(0, 10);
 
-  const [{ data: roles }, { data: salons }, { data: salonSales }, { data: directSales }, { data: visits }] =
+  const [{ data: reps }, { data: salons }, { data: salonSales }, { data: directSales }, { data: visits }] =
     await Promise.all([
-      supabase.from("user_roles").select("user_id").eq("role", "representante"),
+      supabase.rpc("get_representantes"),
       supabase.from("salons").select("id,nome,representante_id").eq("ativo", true).order("nome"),
       supabase.from("salon_sales").select("*").gte("data", monthStart),
       supabase.from("rep_direct_sales").select("*").gte("data", monthStart),
       supabase.from("salon_visit_log").select("*").gte("data", monthStart).order("data", { ascending: false }),
     ]);
 
-  const userIds = (roles ?? []).map((r: any) => r.user_id);
-  const { data: profiles } = userIds.length
-    ? await supabase.from("profiles").select("id,nome,email").in("id", userIds)
-    : { data: [] };
-  console.log('PROFILES:', profiles);
+  console.log('PROFILES:', reps);
 
-  const reps: Rep[] = (profiles ?? []).map((p: any) => ({ id: p.id, nome: p.nome, email: p.email }));
+  const repList: Rep[] = (reps ?? []).map((p: any) => ({ id: p.id, nome: p.nome, email: p.email }));
   const prodIds = [
     ...new Set([
       ...(salonSales ?? []).map((s: any) => s.produto_id),
@@ -94,7 +90,7 @@ async function fetchRepData() {
   }
 
   return {
-    reps,
+    reps: repList,
     salons: (salons ?? []) as Salon[],
     salonSales: (salonSales ?? []) as SalonSale[],
     directSales: (directSales ?? []) as DirectSale[],

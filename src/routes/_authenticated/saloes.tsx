@@ -75,7 +75,7 @@ async function fetchSaloesData() {
     { data: returns },
   ] = await Promise.all([
     supabase.from("salons").select("*").order("nome"),
-    supabase.from("user_roles").select("user_id").eq("role", "representante"),
+    supabase.rpc("get_representantes"),
     supabase.from("salon_visit_log").select("*").order("data", { ascending: false }),
     supabase.from("transfers").select("*").order("data", { ascending: false }),
     supabase.from("salon_sales").select("*").order("data", { ascending: false }),
@@ -83,13 +83,8 @@ async function fetchSaloesData() {
     supabase.from("returns").select("*").order("data", { ascending: false }),
   ]);
 
-  const repUserIds = (reps ?? []).map((r: any) => r.user_id);
-  const { data: repProfiles } = repUserIds.length
-    ? await supabase.from("profiles").select("id,nome").in("id", repUserIds)
-    : { data: [] };
-  console.log('PROFILES:', repProfiles);
-
-  const repList: Rep[] = (repProfiles ?? []).map((p: any) => ({ id: p.id, nome: p.nome }));
+  console.log('PROFILES:', reps);
+  const repList: Rep[] = (reps ?? []).map((p: any) => ({ id: p.id, nome: p.nome }));
   const repMap = new Map(repList.map((r) => [r.id, r.nome]));
   const prodMap = new Map((products ?? []).map((p: any) => [p.id, p.nome]));
 
