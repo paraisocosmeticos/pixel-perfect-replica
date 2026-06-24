@@ -13,7 +13,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Store, AlertTriangle, Banknote, Coins, Plus, MapPin, Phone, User, Calendar } from "lucide-react";
+import { Store, AlertTriangle, Banknote, Coins, Plus, MapPin, Phone, User, Calendar, CreditCard } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/saloes")({
@@ -532,20 +532,179 @@ function SalonModal({
   );
 }
 
+type Fiado = {
+  id: string;
+  salon_id: string;
+  produto_id: string | null;
+  cliente_nome: string;
+  descricao: string | null;
+  valor: number;
+  data: string;
+  status: "pendente" | "recebido";
+  data_recebido: string | null;
+};
+
+// ── Fiado Modal ───────────────────────────────────────────────────────────────
+function FiadoModal({
+  open,
+  onClose,
+  salonId,
+}: {
+  open: boolean;
+  onClose: () => void;
+  salonId: string;
+}) {
+  const qc = useQueryClient();
+  const [clienteNome, setClienteNome] = useState("");
+  const [descricao, setDescricao] = useState("");
+  const [valor, setValor] = useState("");
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
+  const [produtoId, setProdutoId] = useState("");
+
+  const { data: products } = useQuery({
+    queryKey: ["active-products"],
+    queryFn: () =>
+      supabase.from("products").select("id,nome").eq("ativo", true).order("nome").then((r) => r.data ?? []),
+  });
+
+  useEffect(() => {
+    if (open) {
+      setClienteNome(""); setDescricao(""); setValor("");
+      setData(new Date().toISOString().slice(0, 10)); setProdutoId("");
+    }
+  }, [open]);
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const { error } = await (supabase as any).from("fiado").insert({
+        salon_id: salonId,
+        cliente_nome: clienteNome.trim(),
+        descricao: descricao.trim() || null,
+        valor: parseFloat(valor),
+        data,
+        produto_id: produtoId || null,
+        status: "pendente",
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["fiado", salonId] });
+      toast.success("Fiado registado.");
+      onClose();
+    },
+    onError: (e: any) => toast.error("Erro", { description: e.message }),
+  });
+
+  const valorNum = parseFloat(valor);
+  const valorInvalid = isNaN(valorNum) || valorNum <= 0;
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Novo Fiado</DialogTitle></DialogHeader>
+        <div className="space-y-4 py-2">
+          <div className="space-y-1">
+            <Label>Cliente <span className="text-red-500">*</span></Label>
+            <Input value={clienteNome} onChange={(e) => setClienteNome(e.target.value)} placeholder="Nome do cliente" />
+          </div>
+          <div className="space-y-1">
+            <Label>Descrição <span className="text-muted-foreground">(opcional)</span></Label>
+            <Input value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="Ex: corte + coloração" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>Valor (€) <span className="text-red-500">*</span></Label>
+              <Input
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={valor}
+                onChange={(e) => setValor(e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>Data</Label>
+              <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label>Produto <span className="text-muted-foreground">(opcional)</span></Label>
+            <Select value={produtoId} onValueChange={setProdutoId}>
+              <SelectTrigger><SelectValue placeholder="Seleccionar produto…" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">— Nenhum —</SelectItem>
+                {(products ?? []).map((p: any) => (
+                  <SelectItem key={p.id} value={p.id}>{String(p.nome ?? "—")}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button
+            className="bg-accent text-accent-foreground hover:bg-accent/90"
+            onClick={() => mutation.mutate()}
+            disabled={!clienteNome.trim() || valorInvalid || mutation.isPending}
+          >
+            {mutation.isPending ? "A guardar…" : "Registar Fiado"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Salon Sheet ───────────────────────────────────────────────────────────────
 function SalonSheet({
   salon,
   onClose,
   data: d,
+  isAdmin,
 }: {
   salon: Salon | null;
   onClose: () => void;
   data: Awaited<ReturnType<typeof fetchSaloesData>> | undefined;
+  isAdmin: boolean;
 }) {
+  const qc = useQueryClient();
   const [visitOpen, setVisitOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [devolucaoOpen, setDevolucaoOpen] = useState(false);
+  const [fiadoOpen, setFiadoOpen] = useState(false);
+
+  // Fiado query — só corre para admin
+  const { data: fiadoRows } = useQuery({
+    queryKey: ["fiado", salon?.id],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("fiado")
+        .select("id,salon_id,produto_id,cliente_nome,descricao,valor,data,status,data_recebido")
+        .eq("salon_id", salon!.id)
+        .order("data", { ascending: false });
+      if (error) throw error;
+      return (data ?? []) as Fiado[];
+    },
+    enabled: isAdmin && !!salon,
+  });
+
+  const receberFiado = useMutation({
+    mutationFn: async (fiadoId: string) => {
+      const today = new Date().toISOString().slice(0, 10);
+      const { error } = await (supabase as any)
+        .from("fiado")
+        .update({ status: "recebido", data_recebido: today })
+        .eq("id", fiadoId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["fiado", salon?.id] });
+      toast.success("Fiado marcado como recebido.");
+    },
+    onError: (e: any) => toast.error("Erro", { description: e.message }),
+  });
 
   if (!salon || !d) return null;
 
@@ -575,6 +734,10 @@ function SalonSheet({
   const pendingComm = salonSales.reduce((sum, s) => sum + Number(s.comissao_salao ?? 0), 0);
   const lastVisit = salonVisits[0]?.data ?? null;
   const stockCount = salonTransfers.length; // rough proxy
+
+  const fiadoPendente = (fiadoRows ?? [])
+    .filter((f) => f.status === "pendente")
+    .reduce((sum, f) => sum + Number(f.valor), 0);
 
   const miniStats = [
     { label: "Transferências este mês", value: salonTransfers.length + " linhas" },
@@ -607,7 +770,7 @@ function SalonSheet({
             </div>
           </SheetHeader>
 
-          <div className="grid grid-cols-2 gap-3 mb-5">
+          <div className="grid grid-cols-2 gap-3 mb-3">
             {miniStats.map((s) => (
               <Card key={s.label} className="p-3">
                 <p className="text-xs text-muted-foreground">{s.label}</p>
@@ -616,13 +779,24 @@ function SalonSheet({
             ))}
           </div>
 
+          {isAdmin && (
+            <Card className="p-3 mb-5 flex items-center gap-3 border-orange-200 bg-orange-50">
+              <CreditCard className="h-5 w-5 text-orange-500 shrink-0" />
+              <div>
+                <p className="text-xs text-orange-700">Fiado Pendente</p>
+                <p className="font-semibold text-orange-700">{eur(fiadoPendente)}</p>
+              </div>
+            </Card>
+          )}
+
           <Tabs defaultValue="stock">
-            <TabsList className="w-full grid grid-cols-5 mb-4">
+            <TabsList className={`w-full grid mb-4 ${isAdmin ? "grid-cols-6" : "grid-cols-5"}`}>
               <TabsTrigger value="stock">Stock</TabsTrigger>
               <TabsTrigger value="transferencias">Transf.</TabsTrigger>
               <TabsTrigger value="vendas">Vendas</TabsTrigger>
               <TabsTrigger value="devolucoes">Devol.</TabsTrigger>
               <TabsTrigger value="visitas">Visitas</TabsTrigger>
+              {isAdmin && <TabsTrigger value="fiado">Fiado</TabsTrigger>}
             </TabsList>
 
             <TabsContent value="stock">
@@ -754,6 +928,64 @@ function SalonSheet({
                 </div>
               )}
             </TabsContent>
+            {isAdmin && (
+              <TabsContent value="fiado">
+                <div className="flex justify-end mb-3">
+                  <Button size="sm" className="bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => setFiadoOpen(true)}>
+                    <Plus className="h-3 w-3 mr-1" /> Novo Fiado
+                  </Button>
+                </div>
+                {(fiadoRows ?? []).length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Sem registos de fiado neste salão.</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-primary hover:bg-primary">
+                        <TableHead className="text-primary-foreground">Cliente</TableHead>
+                        <TableHead className="text-primary-foreground">Descrição</TableHead>
+                        <TableHead className="text-primary-foreground text-right">Valor</TableHead>
+                        <TableHead className="text-primary-foreground">Data</TableHead>
+                        <TableHead className="text-primary-foreground">Estado</TableHead>
+                        <TableHead className="text-primary-foreground"></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {(fiadoRows ?? []).map((f) => (
+                        <TableRow key={f.id}>
+                          <TableCell className="font-medium">{String(f.cliente_nome ?? "—")}</TableCell>
+                          <TableCell className="text-muted-foreground text-sm">{String(f.descricao ?? "—")}</TableCell>
+                          <TableCell className="text-right font-semibold">{eur(Number(f.valor) || 0)}</TableCell>
+                          <TableCell>{fmtDate(f.data)}</TableCell>
+                          <TableCell>
+                            {f.status === "pendente" ? (
+                              <Badge className="bg-orange-500 text-white hover:bg-orange-500">Pendente</Badge>
+                            ) : (
+                              <Badge className="bg-green-600 text-white hover:bg-green-600">Recebido</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {f.status === "pendente" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-xs h-7"
+                                disabled={receberFiado.isPending}
+                                onClick={() => receberFiado.mutate(f.id)}
+                              >
+                                ✓ OK — Recebido
+                              </Button>
+                            )}
+                            {f.status === "recebido" && f.data_recebido && (
+                              <span className="text-xs text-muted-foreground">{fmtDate(f.data_recebido)}</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </TabsContent>
+            )}
           </Tabs>
         </SheetContent>
       </Sheet>
@@ -762,6 +994,7 @@ function SalonSheet({
       <SalonModal open={editOpen} onClose={() => setEditOpen(false)} salon={salon} reps={d.repList} />
       <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} salonId={salon.id} />
       <DevolucaoModal open={devolucaoOpen} onClose={() => setDevolucaoOpen(false)} salonId={salon.id} salonStock={salonStock} prodMap={d.prodMap} />
+      {isAdmin && <FiadoModal open={fiadoOpen} onClose={() => setFiadoOpen(false)} salonId={salon.id} />}
     </>
   );
 }
@@ -772,6 +1005,22 @@ const SEED_SALONS = ["Made in Brasil", "Brooklyn Barber Studio", "Andrade Hair",
 function SaloesPage() {
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ["saloes"], queryFn: fetchSaloesData });
+
+  const { data: myRole } = useQuery({
+    queryKey: ["my-role"],
+    queryFn: async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return null;
+      const { data } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", session.user.id)
+        .single();
+      return data?.role ?? null;
+    },
+    staleTime: 60_000,
+  });
+  const isAdmin = myRole === "admin";
 
   const [selected, setSelected] = useState<Salon | null>(null);
   const [newOpen, setNewOpen] = useState(false);
@@ -879,7 +1128,7 @@ function SaloesPage() {
         })}
       </section>
 
-      <SalonSheet salon={selected} onClose={() => setSelected(null)} data={data} />
+      <SalonSheet salon={selected} onClose={() => setSelected(null)} data={data} isAdmin={isAdmin} />
       <SalonModal open={newOpen} onClose={() => setNewOpen(false)} salon={null} reps={data?.repList ?? []} />
     </div>
   );
