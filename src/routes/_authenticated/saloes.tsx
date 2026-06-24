@@ -15,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Store, AlertTriangle, Banknote, Coins, Plus, MapPin, Phone, User, Calendar, CreditCard } from "lucide-react";
 import { toast } from "sonner";
+import { ProductCombobox } from "@/components/ui/product-combobox";
 
 export const Route = createFileRoute("/_authenticated/saloes")({
   head: () => ({ meta: [{ title: "Salões — Secrets VIP" }] }),
@@ -260,19 +261,17 @@ function TransferModal({
         <div className="space-y-4 py-2">
           <div className="space-y-1">
             <Label>Produto</Label>
-            <Select value={produtoId} onValueChange={setProdutoId}>
-              <SelectTrigger><SelectValue placeholder="Seleccionar produto…" /></SelectTrigger>
-              <SelectContent>
-                {(products ?? []).map((p: any) => {
-                  const sq = stockMap.get(p.id) ?? 0;
-                  return (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.nome} <span className="text-muted-foreground ml-1">(QG: {sq})</span>
-                    </SelectItem>
-                  );
-                })}
-              </SelectContent>
-            </Select>
+            <ProductCombobox
+              value={produtoId}
+              onChange={setProdutoId}
+              products={(products ?? []).map((p: any) => ({
+                id: p.id,
+                nome: p.nome,
+                stock: stockMap.get(p.id) ?? 0,
+              }))}
+              showStock
+              placeholder="Seleccionar produto…"
+            />
           </div>
           <div className="space-y-1">
             <Label>Quantidade</Label>
@@ -369,20 +368,21 @@ function DevolucaoModal({
         <div className="space-y-4 py-2">
           <div className="space-y-1">
             <Label>Produto</Label>
-            <Select value={produtoId} onValueChange={(v) => { setProdutoId(v); setQuantidade(1); }}>
-              <SelectTrigger><SelectValue placeholder="Seleccionar produto…" /></SelectTrigger>
-              <SelectContent>
-                {availableProducts.length === 0 && (
-                  <SelectItem value="none" disabled>Sem stock disponível neste salão</SelectItem>
-                )}
-                {availableProducts.map((s) => (
-                  <SelectItem key={s.produto_id} value={s.produto_id}>
-                    {prodMap.get(s.produto_id) ?? s.produto_id}
-                    <span className="text-muted-foreground ml-1">(Stock: {s.qty})</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {availableProducts.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-2">Sem stock disponível neste salão.</p>
+            ) : (
+              <ProductCombobox
+                value={produtoId}
+                onChange={(id) => { setProdutoId(id); setQuantidade(1); }}
+                products={availableProducts.map((s) => ({
+                  id: s.produto_id,
+                  nome: prodMap.get(s.produto_id) ?? s.produto_id,
+                  stock: s.qty,
+                }))}
+                showStock
+                placeholder="Seleccionar produto…"
+              />
+            )}
           </div>
           <div className="space-y-1">
             <Label>Quantidade</Label>
@@ -630,15 +630,15 @@ function FiadoModal({
           </div>
           <div className="space-y-1">
             <Label>Produto <span className="text-muted-foreground">(opcional)</span></Label>
-            <Select value={produtoId} onValueChange={setProdutoId}>
-              <SelectTrigger><SelectValue placeholder="Seleccionar produto…" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Sem produto específico</SelectItem>
-                {(products ?? []).filter((p: any) => p.id).map((p: any) => (
-                  <SelectItem key={p.id} value={p.id}>{String(p.nome ?? "—")}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ProductCombobox
+              value={produtoId}
+              onChange={setProdutoId}
+              products={(products ?? []).filter((p: any) => p.id).map((p: any) => ({
+                id: p.id,
+                nome: String(p.nome ?? "—"),
+              }))}
+              placeholder="Sem produto específico"
+            />
           </div>
         </div>
         <DialogFooter>

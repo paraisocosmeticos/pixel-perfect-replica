@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Package, AlertTriangle, XCircle, Coins, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { ProductCombobox } from "@/components/ui/product-combobox";
 
 export const Route = createFileRoute("/_authenticated/stock")({
   head: () => ({ meta: [{ title: "Stock — Secrets VIP" }] }),
@@ -140,14 +141,12 @@ function AjusteModal({
         <div className="space-y-4 py-2">
           <div className="space-y-1">
             <Label>Produto</Label>
-            <Select value={produtoId} onValueChange={setProdutoId}>
-              <SelectTrigger><SelectValue placeholder="Seleccionar produto…" /></SelectTrigger>
-              <SelectContent>
-                {products.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ProductCombobox
+              value={produtoId}
+              onChange={setProdutoId}
+              products={products}
+              placeholder="Seleccionar produto…"
+            />
           </div>
           <div className="space-y-1">
             <Label>Tipo</Label>
@@ -286,18 +285,16 @@ function CompraModal({
             <Label>Produtos</Label>
             {lines.map((l, i) => (
               <div key={i} className="grid grid-cols-[1fr_80px_90px_32px] gap-2 items-center">
-                <Select value={l.produto_id} onValueChange={(v) => {
-                  const prod = products.find((p) => p.id === v);
-                  setLine(i, "produto_id", v);
-                  if (prod) setLine(i, "preco_custo", String(prod.preco_custo));
-                }}>
-                  <SelectTrigger><SelectValue placeholder="Produto…" /></SelectTrigger>
-                  <SelectContent>
-                    {products.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <ProductCombobox
+                  value={l.produto_id}
+                  products={products}
+                  onChange={(id) => {
+                    const prod = products.find((p) => p.id === id);
+                    setLine(i, "produto_id", id);
+                    if (prod) setLine(i, "preco_custo", String(prod.preco_custo));
+                  }}
+                  placeholder="Produto…"
+                />
                 <Input
                   type="number"
                   min="1"

@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Receipt, ShoppingCart, Coins, Star, Plus, Download } from "lucide-react";
+import { ProductCombobox } from "@/components/ui/product-combobox";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/vendas")({
@@ -194,14 +195,13 @@ function VendaSalaoModal({
           </div>
           <div className="space-y-1">
             <Label>Produto</Label>
-            <Select value={produtoId} onValueChange={onProduto}>
-              <SelectTrigger><SelectValue placeholder="Seleccionar produto…" /></SelectTrigger>
-              <SelectContent>
-                {products.filter((p) => p.id).map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ProductCombobox
+              value={produtoId}
+              onChange={onProduto}
+              products={products}
+              showPrice
+              placeholder="Seleccionar produto…"
+            />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
@@ -314,14 +314,13 @@ function VendaDiretaModal({
           </div>
           <div className="space-y-1">
             <Label>Produto</Label>
-            <Select value={produtoId} onValueChange={onProduto}>
-              <SelectTrigger><SelectValue placeholder="Seleccionar produto…" /></SelectTrigger>
-              <SelectContent>
-                {products.filter((p) => p.id).map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ProductCombobox
+              value={produtoId}
+              onChange={onProduto}
+              products={products}
+              showPrice
+              placeholder="Seleccionar produto…"
+            />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">

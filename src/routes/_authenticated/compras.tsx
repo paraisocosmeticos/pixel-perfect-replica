@@ -9,12 +9,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Receipt, ShoppingCart, Calendar, Sparkles, Plus, Trash2, ChevronsUpDown, Check } from "lucide-react";
+import { Receipt, ShoppingCart, Calendar, Sparkles, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { ProductCombobox } from "@/components/ui/product-combobox";
 
 export const Route = createFileRoute("/_authenticated/compras")({
   head: () => ({ meta: [{ title: "Compras — Secrets VIP" }] }),
@@ -87,68 +85,6 @@ async function fetchComprasData() {
     totalMes,
     nCiclo: purchasesThisCycle.length,
   };
-}
-
-// ── Product Combobox ──────────────────────────────────────────────────────────
-function ProductCombobox({
-  value,
-  onChange,
-  products,
-}: {
-  value: string;
-  onChange: (id: string, custo: number) => void;
-  products: Product[];
-}) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-
-  const filtered = products.filter((p) =>
-    p.nome.toLowerCase().includes(search.toLowerCase()),
-  );
-  const selected = products.find((p) => p.id === value);
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          role="combobox"
-          className="w-full justify-between font-normal truncate"
-        >
-          <span className="truncate">{selected ? selected.nome : "Produto…"}</span>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[320px] p-0" align="start">
-        <Command shouldFilter={false}>
-          <CommandInput
-            placeholder="Pesquisar produto…"
-            value={search}
-            onValueChange={setSearch}
-          />
-          <CommandList>
-            <CommandEmpty>Nenhum produto encontrado.</CommandEmpty>
-            <CommandGroup>
-              {filtered.map((p) => (
-                <CommandItem
-                  key={p.id}
-                  value={p.id}
-                  onSelect={() => {
-                    onChange(p.id, p.preco_custo);
-                    setSearch("");
-                    setOpen(false);
-                  }}
-                >
-                  <Check className={cn("mr-2 h-4 w-4 shrink-0", value === p.id ? "opacity-100" : "opacity-0")} />
-                  <span className="text-sm">{p.nome}</span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
 }
 
 // ── Nova Compra Modal ─────────────────────────────────────────────────────────
@@ -246,9 +182,10 @@ function NovaCompraModal({
                 <ProductCombobox
                   value={l.produto_id}
                   products={products}
-                  onChange={(id, custo) => {
+                  onChange={(id) => {
+                    const prod = products.find((p) => p.id === id);
                     setLine(i, "produto_id", id);
-                    setLine(i, "preco_custo", String(custo));
+                    if (prod) setLine(i, "preco_custo", String(prod.preco_custo));
                   }}
                 />
                 <Input
