@@ -242,7 +242,7 @@ function RepSheet({
                   return (
                     <div key={s.id} className="flex items-center justify-between gap-2 py-2 border-b last:border-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium">{s.nome}</span>
+                        <span className="text-sm font-medium">{s.nome ?? "—"}</span>
                         {late
                           ? <Badge className="bg-red-600 text-white hover:bg-red-600 text-xs">Atraso</Badge>
                           : <Badge className="bg-green-600 text-white hover:bg-green-600 text-xs">Em dia</Badge>}
@@ -322,7 +322,7 @@ function RepSheet({
                     {myVisits.map((v) => (
                       <Card key={v.id} className="p-3">
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium">{fmtDate(v.data)}</span>
+                          <span className="text-sm font-medium">{v.data ? fmtDate(v.data) : "—"}</span>
                           <span className="text-xs text-muted-foreground">{d.salonMap.get(v.salon_id) ?? "—"}</span>
                         </div>
                         {v.notas && <p className="text-xs text-muted-foreground mt-1">{v.notas}</p>}
