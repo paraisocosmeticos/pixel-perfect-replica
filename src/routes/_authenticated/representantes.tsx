@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useEffect, Component, type ReactNode } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,8 +11,6 @@ import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Users, Receipt, Coins, Calendar, Plus } from "lucide-react";
 import { toast } from "sonner";
 
@@ -55,47 +53,6 @@ function daysSince(d: string | null | undefined) {
 // Plain-object maps (serialization-safe — React Query can cache without losing .get())
 type StrMap = Record<string, string>;
 
-function safeStr(v: unknown): string {
-  if (v == null) return "—";
-  if (typeof v === "string") return v;
-  if (typeof v === "number") return String(v);
-  return "—";
-}
-
-// Detects objects sneaking into JSX and logs them instead of crashing
-function sc(label: string, v: unknown): string {
-  if (v !== null && typeof v === "object") {
-    console.error(`[#310] Object as child detected in field "${label}":`, JSON.stringify(v));
-    return `[OBJECT: ${label}]`;
-  }
-  if (v == null) return "—";
-  return String(v);
-}
-
-// ── ErrorBoundary ─────────────────────────────────────────────────────────────
-class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
-  constructor(props: any) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(e: Error) { return { error: e }; }
-  componentDidCatch(e: Error, info: any) {
-    console.error('SHEET ERROR (componentDidCatch):', e);
-    console.error('SHEET ERROR stack:', e.stack);
-    console.error('SHEET componentStack:', info?.componentStack);
-  }
-  render() {
-    if (this.state.error) {
-      const e = this.state.error;
-      return (
-        <div className="p-4 text-sm text-red-500 border border-red-200 rounded space-y-1">
-          <p className="font-semibold">Erro ao abrir ficha</p>
-          <p className="font-mono text-xs">{String(e)}</p>
-          <p className="font-mono text-xs whitespace-pre-wrap">{e.stack}</p>
-          <button className="mt-2 underline" onClick={() => this.setState({ error: null })}>Fechar</button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
 
 function toStr(v: unknown): string {
   if (v == null) return "";
@@ -266,197 +223,26 @@ function AssignSalonModal({
 
 function RepSheet({
   rep,
+  open,
   onClose,
-  d,
 }: {
   rep: Rep | null;
+  open: boolean;
   onClose: () => void;
-  d: Awaited<ReturnType<typeof fetchRepData>> | undefined;
 }) {
-  const qc = useQueryClient();
-  const [assignOpen, setAssignOpen] = useState(false);
-
-  // ── DIAGNOSTIC LOGS ──────────────────────────────────────────────────────
-  console.log('REP DATA:', JSON.stringify(rep, null, 2));
-  console.log('QUERY RESULT d.reps:', JSON.stringify(d?.reps));
-  console.log('QUERY RESULT d.salons:', JSON.stringify(d?.salons?.slice(0, 2)));
-  console.log('QUERY RESULT d.salonSales:', JSON.stringify(d?.salonSales?.slice(0, 2)));
-  console.log('QUERY RESULT d.directSales:', JSON.stringify(d?.directSales?.slice(0, 2)));
-  console.log('QUERY RESULT d.visits:', JSON.stringify(d?.visits?.slice(0, 2)));
-  // ─────────────────────────────────────────────────────────────────────────
-
-  if (!rep || !d) return null;
-
-  const mySalons = d.salons.filter((s) => s.representante_id === rep.id);
-  const mySalonSales = d.salonSales.filter((s) => s.representante_id === rep.id);
-  const myDirectSales = d.directSales.filter((s) => s.representante_id === rep.id);
-  const myVisits = d.visits.filter((v) => v.representante_id === rep.id);
-
-  const salonRevenue = mySalonSales.reduce((s, r) => s + Number(r.preco_final), 0);
-  const directRevenue = myDirectSales.reduce((s, r) => s + Number(r.preco_final), 0);
-  const totalComm = [
-    ...mySalonSales.map((s) => Number(s.comissao_rep)),
-    ...myDirectSales.map((s) => Number(s.comissao_rep)),
-  ].reduce((a, b) => a + b, 0);
-
-  const removeSalonMutation = useMutation({
-    mutationFn: async (salonId: string) => {
-      const { error } = await supabase.from("salons").update({ representante_id: null }).eq("id", salonId);
-      if (error) throw error;
-    },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["representantes"] }); toast.success("Reatribuído."); },
-    onError: (e: any) => toast.error("Erro", { description: e.message }),
-  });
-
+  if (!rep) return null;
   return (
-    <>
-      <Sheet open={!!rep} onOpenChange={(v) => !v && onClose()}>
-        <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
-          <SheetHeader className="mb-5">
-            <div className="flex items-center gap-3">
-              <div className="h-12 w-12 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-display font-semibold text-lg shrink-0">
-                {initials(rep.nome)}
-              </div>
-              <div>
-                <SheetTitle>{sc("rep.nome", rep.nome)}</SheetTitle>
-                <p className="text-sm text-muted-foreground">{sc("rep.email", rep.email)}</p>
-              </div>
-            </div>
-          </SheetHeader>
-
-          <div className="grid grid-cols-3 gap-3 mb-5">
-            <Card className="p-3 text-center">
-              <p className="text-xs text-muted-foreground">Vendas salões</p>
-              <p className="font-semibold mt-1 text-sm">{eur(salonRevenue)}</p>
-            </Card>
-            <Card className="p-3 text-center">
-              <p className="text-xs text-muted-foreground">Vendas directas</p>
-              <p className="font-semibold mt-1 text-sm">{eur(directRevenue)}</p>
-            </Card>
-            <Card className="p-3 text-center">
-              <p className="text-xs text-muted-foreground">Comissão total</p>
-              <p className="font-semibold mt-1 text-sm text-accent">{eur(totalComm)}</p>
-            </Card>
-          </div>
-
-          <Tabs defaultValue="saloes">
-            <TabsList className="w-full grid grid-cols-4 mb-4">
-              <TabsTrigger value="saloes">Salões</TabsTrigger>
-              <TabsTrigger value="vsaloes">Vnd. Salão</TabsTrigger>
-              <TabsTrigger value="vdiretas">Vnd. Dir.</TabsTrigger>
-              <TabsTrigger value="visitas">Visitas</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="saloes">
-              <div className="space-y-2 mb-3">
-                {mySalons.length === 0 && <p className="text-sm text-muted-foreground">Nenhum salão atribuído.</p>}
-                {mySalons.map((s) => {
-                  const lv = d.lastVisitKey[`${rep.id}:${s.id}`] ?? null;
-                  const late = !lv || daysSince(lv) > 15;
-                  return (
-                    <div key={s.id} className="flex items-center justify-between gap-2 py-2 border-b last:border-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium">{sc("salon.nome", s.nome)}</span>
-                        {late
-                          ? <Badge className="bg-red-600 text-white hover:bg-red-600 text-xs">Atraso</Badge>
-                          : <Badge className="bg-green-600 text-white hover:bg-green-600 text-xs">Em dia</Badge>}
-                      </div>
-                      <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => removeSalonMutation.mutate(s.id)}>
-                        Remover
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-              <Button variant="outline" size="sm" onClick={() => setAssignOpen(true)}>
-                <Plus className="h-3 w-3 mr-1" /> Adicionar salão
-              </Button>
-            </TabsContent>
-
-            <TabsContent value="vsaloes">
-              {mySalonSales.length === 0
-                ? <p className="text-sm text-muted-foreground">Sem vendas em salões este mês.</p>
-                : <Table>
-                    <TableHeader>
-                      <TableRow className="bg-primary hover:bg-primary">
-                        <TableHead className="text-primary-foreground">Data</TableHead>
-                        <TableHead className="text-primary-foreground">Salão</TableHead>
-                        <TableHead className="text-primary-foreground">Produto</TableHead>
-                        <TableHead className="text-primary-foreground text-right">Valor</TableHead>
-                        <TableHead className="text-primary-foreground text-right">Comissão</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {mySalonSales.map((s) => (
-                        <TableRow key={s.id}>
-                          <TableCell>{sc("salonSale.data", s.data ? fmtDate(s.data) : "—")}</TableCell>
-                          <TableCell>{sc("salonMap.salon_id", d.salonMap[s.salon_id])}</TableCell>
-                          <TableCell>{sc("prodMap.produto_id", d.prodMap[s.produto_id])}</TableCell>
-                          <TableCell className="text-right">{eur(Number(s.preco_final) || 0)}</TableCell>
-                          <TableCell className="text-right">{eur(Number(s.comissao_rep) || 0)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-              }
-            </TabsContent>
-
-            <TabsContent value="vdiretas">
-              {myDirectSales.length === 0
-                ? <p className="text-sm text-muted-foreground">Sem vendas directas este mês.</p>
-                : <Table>
-                    <TableHeader>
-                      <TableRow className="bg-primary hover:bg-primary">
-                        <TableHead className="text-primary-foreground">Data</TableHead>
-                        <TableHead className="text-primary-foreground">Produto</TableHead>
-                        <TableHead className="text-primary-foreground">Cliente</TableHead>
-                        <TableHead className="text-primary-foreground text-right">Valor</TableHead>
-                        <TableHead className="text-primary-foreground text-right">Comissão</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {myDirectSales.map((s) => (
-                        <TableRow key={s.id}>
-                          <TableCell>{sc("directSale.data", s.data ? fmtDate(s.data) : "—")}</TableCell>
-                          <TableCell>{sc("prodMap.produto_id(direct)", d.prodMap[s.produto_id])}</TableCell>
-                          <TableCell>{sc("cliente_nome", s.cliente_nome)}</TableCell>
-                          <TableCell className="text-right">{eur(Number(s.preco_final) || 0)}</TableCell>
-                          <TableCell className="text-right">{eur(Number(s.comissao_rep) || 0)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-              }
-            </TabsContent>
-
-            <TabsContent value="visitas">
-              {myVisits.length === 0
-                ? <p className="text-sm text-muted-foreground">Sem visitas este mês.</p>
-                : <div className="space-y-2">
-                    {myVisits.map((v) => (
-                      <Card key={v.id} className="p-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium">{sc("visit.data", v.data ? fmtDate(v.data) : "—")}</span>
-                          <span className="text-xs text-muted-foreground">{sc("salonMap.visit.salon_id", d.salonMap[v.salon_id])}</span>
-                        </div>
-                        {v.notas && <p className="text-xs text-muted-foreground mt-1">{sc("visit.notas", v.notas)}</p>}
-                      </Card>
-                    ))}
-                  </div>
-              }
-            </TabsContent>
-          </Tabs>
-        </SheetContent>
-      </Sheet>
-
-      <AssignSalonModal
-        open={assignOpen}
-        onClose={() => setAssignOpen(false)}
-        repId={rep.id}
-        salons={d.salons}
-        assigned={mySalons.map((s) => s.id)}
-      />
-    </>
+    <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
+      <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
+        <SheetHeader className="mb-5">
+          <SheetTitle>{String(rep.nome ?? "—")}</SheetTitle>
+        </SheetHeader>
+        <div className="p-4 space-y-4">
+          <p className="text-sm">Email: {String(rep.email ?? "—")}</p>
+          <p className="text-sm text-muted-foreground">ID: {String(rep.id ?? "—")}</p>
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -692,9 +478,7 @@ function RepresentantesPage() {
         })}
       </section>
 
-      <ErrorBoundary>
-        <RepSheet rep={selected} onClose={() => setSelected(null)} d={data} />
-      </ErrorBoundary>
+      <RepSheet rep={selected} open={!!selected} onClose={() => setSelected(null)} />
       <NovaRepModal open={newOpen} onClose={() => setNewOpen(false)} />
     </div>
   );
