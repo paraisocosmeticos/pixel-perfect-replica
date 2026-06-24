@@ -41,8 +41,9 @@ function fmtDate(s: string) {
   return new Date(s).toLocaleDateString("pt-PT");
 }
 
-function initials(nome: string) {
-  return nome.split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+function initials(nome: string | null | undefined) {
+  if (!nome) return "?";
+  return nome.split(" ").slice(0, 2).map((w) => w[0] ?? "").join("").toUpperCase() || "?";
 }
 
 function daysSince(d: string) {
@@ -203,8 +204,8 @@ function RepSheet({
                 {initials(rep.nome)}
               </div>
               <div>
-                <SheetTitle>{rep.nome}</SheetTitle>
-                <p className="text-sm text-muted-foreground">{rep.email}</p>
+                <SheetTitle>{rep.nome ?? "—"}</SheetTitle>
+                <p className="text-sm text-muted-foreground">{rep.email ?? "—"}</p>
               </div>
             </div>
           </SheetHeader>
@@ -274,11 +275,11 @@ function RepSheet({
                     <TableBody>
                       {mySalonSales.map((s) => (
                         <TableRow key={s.id}>
-                          <TableCell>{fmtDate(s.data)}</TableCell>
+                          <TableCell>{s.data ? fmtDate(s.data) : "—"}</TableCell>
                           <TableCell>{d.salonMap.get(s.salon_id) ?? "—"}</TableCell>
                           <TableCell>{d.prodMap.get(s.produto_id) ?? "—"}</TableCell>
-                          <TableCell className="text-right">{eur(Number(s.preco_final))}</TableCell>
-                          <TableCell className="text-right">{eur(Number(s.comissao_rep))}</TableCell>
+                          <TableCell className="text-right">{eur(Number(s.preco_final) || 0)}</TableCell>
+                          <TableCell className="text-right">{eur(Number(s.comissao_rep) || 0)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -302,11 +303,11 @@ function RepSheet({
                     <TableBody>
                       {myDirectSales.map((s) => (
                         <TableRow key={s.id}>
-                          <TableCell>{fmtDate(s.data)}</TableCell>
+                          <TableCell>{s.data ? fmtDate(s.data) : "—"}</TableCell>
                           <TableCell>{d.prodMap.get(s.produto_id) ?? "—"}</TableCell>
                           <TableCell>{s.cliente_nome ?? "—"}</TableCell>
-                          <TableCell className="text-right">{eur(Number(s.preco_final))}</TableCell>
-                          <TableCell className="text-right">{eur(Number(s.comissao_rep))}</TableCell>
+                          <TableCell className="text-right">{eur(Number(s.preco_final) || 0)}</TableCell>
+                          <TableCell className="text-right">{eur(Number(s.comissao_rep) || 0)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -527,10 +528,10 @@ function RepresentantesPage() {
             >
               <div className="flex items-center gap-3">
                 <div className="h-11 w-11 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-display font-semibold text-base shrink-0">
-                  {initials(rep.nome)}
+                  {initials(rep.nome ?? "")}
                 </div>
                 <div>
-                  <p className="font-semibold">{rep.nome}</p>
+                  <p className="font-semibold">{rep.nome ?? "—"}</p>
                   <p className="text-xs text-muted-foreground">{mySalons.length} salão{mySalons.length !== 1 ? "ões" : ""} atribuído{mySalons.length !== 1 ? "s" : ""}</p>
                 </div>
               </div>
