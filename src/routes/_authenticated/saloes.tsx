@@ -1054,9 +1054,11 @@ function SaloesPage() {
           <h1 className="text-3xl md:text-4xl font-display font-semibold mt-1">Salões</h1>
           <p className="text-muted-foreground mt-2">Gestão de salões parceiros e visitas.</p>
         </div>
-        <Button className="bg-accent text-accent-foreground hover:bg-accent/90 shrink-0 mt-2" onClick={() => setNewOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" /> Novo Salão
-        </Button>
+        {isAdmin && (
+          <Button className="bg-accent text-accent-foreground hover:bg-accent/90 shrink-0 mt-2" onClick={() => setNewOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" /> Novo Salão
+          </Button>
+        )}
       </header>
 
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1078,7 +1080,7 @@ function SaloesPage() {
         })}
       </section>
 
-      {!isLoading && salons.length === 0 && (
+      {!isLoading && salons.length === 0 && isAdmin && (
         <Card className="p-8 flex flex-col items-center gap-3 text-center">
           <Store className="h-10 w-10 text-muted-foreground" />
           <p className="font-semibold">Nenhum salão encontrado</p>
