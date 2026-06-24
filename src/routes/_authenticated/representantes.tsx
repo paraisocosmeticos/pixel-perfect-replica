@@ -97,52 +97,110 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
+function toStr(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  // object/array sneaking in — log it and return empty string
+  console.error("[#310 source] toStr received object:", JSON.stringify(v));
+  return "";
+}
+
 async function fetchRepData() {
   const monthStart = new Date(new Date().setDate(1)).toISOString().slice(0, 10);
 
-  const [{ data: reps }, { data: salons }, { data: salonSales }, { data: directSales }, { data: visits }] =
+  const [{ data: repsRaw }, { data: salonsRaw }, { data: salonSalesRaw }, { data: directSalesRaw }, { data: visitsRaw }] =
     await Promise.all([
       supabase.rpc("get_representantes"),
       supabase.from("salons").select("id,nome,representante_id").eq("ativo", true).order("nome"),
-      supabase.from("salon_sales").select("*").gte("data", monthStart),
-      supabase.from("rep_direct_sales").select("*").gte("data", monthStart),
-      supabase.from("salon_visit_log").select("*").gte("data", monthStart).order("data", { ascending: false }),
+      supabase.from("salon_sales").select("id,data,preco_final,comissao_rep,produto_id,salon_id,representante_id").gte("data", monthStart),
+      supabase.from("rep_direct_sales").select("id,data,preco_final,comissao_rep,produto_id,representante_id,cliente_nome").gte("data", monthStart),
+      supabase.from("salon_visit_log").select("id,data,notas,salon_id,representante_id").gte("data", monthStart).order("data", { ascending: false }),
     ]);
 
-  console.log('PROFILES:', reps);
+  console.log('PROFILES RPC result:', JSON.stringify(repsRaw));
 
-  const repList: Rep[] = (reps ?? []).map((p: any) => ({ id: p.id, nome: p.nome, email: p.email }));
+  // Explicit field-by-field coercion — never pass raw Supabase objects to JSX
+  const repList: Rep[] = (repsRaw ?? []).map((p: any) => ({
+    id: toStr(p.id),
+    nome: toStr(p.nome),
+    email: toStr(p.email),
+  }));
+
+  const salons: Salon[] = (salonsRaw ?? []).map((s: any) => ({
+    id: toStr(s.id),
+    nome: toStr(s.nome),
+    representante_id: s.representante_id != null ? toStr(s.representante_id) : null,
+  }));
+
+  const salonSales: SalonSale[] = (salonSalesRaw ?? []).map((s: any) => ({
+    id: toStr(s.id),
+    data: toStr(s.data),
+    preco_final: Number(s.preco_final) || 0,
+    comissao_rep: Number(s.comissao_rep) || 0,
+    produto_id: toStr(s.produto_id),
+    salon_id: toStr(s.salon_id),
+    representante_id: s.representante_id != null ? toStr(s.representante_id) : null,
+  }));
+
+  const directSales: DirectSale[] = (directSalesRaw ?? []).map((s: any) => ({
+    id: toStr(s.id),
+    data: toStr(s.data),
+    preco_final: Number(s.preco_final) || 0,
+    comissao_rep: Number(s.comissao_rep) || 0,
+    produto_id: toStr(s.produto_id),
+    representante_id: toStr(s.representante_id),
+    cliente_nome: s.cliente_nome != null ? toStr(s.cliente_nome) : null,
+  }));
+
+  const visits: Visit[] = (visitsRaw ?? []).map((v: any) => ({
+    id: toStr(v.id),
+    data: toStr(v.data),
+    notas: v.notas != null ? toStr(v.notas) : null,
+    salon_id: toStr(v.salon_id),
+    representante_id: toStr(v.representante_id),
+  }));
+
+  console.log('COERCED salons[0]:', JSON.stringify(salons[0]));
+  console.log('COERCED salonSales[0]:', JSON.stringify(salonSales[0]));
+  console.log('COERCED visits[0]:', JSON.stringify(visits[0]));
+
   const prodIds = [
     ...new Set([
-      ...(salonSales ?? []).map((s: any) => s.produto_id),
-      ...(directSales ?? []).map((s: any) => s.produto_id),
+      ...salonSales.map((s) => s.produto_id),
+      ...directSales.map((s) => s.produto_id),
     ]),
-  ];
-  const { data: products } = prodIds.length
+  ].filter(Boolean);
+
+  const { data: productsRaw } = prodIds.length
     ? await supabase.from("products").select("id,nome").in("id", prodIds)
     : { data: [] };
 
-  const prodMap: StrMap = Object.fromEntries((products ?? []).map((p: any) => [p.id, String(p.nome ?? "")]));
-  const salonMap: StrMap = Object.fromEntries((salons ?? []).map((s: Salon) => [s.id, String(s.nome ?? "")]));
+  const prodMap: StrMap = Object.fromEntries(
+    (productsRaw ?? []).map((p: any) => [toStr(p.id), toStr(p.nome)])
+  );
+  const salonMap: StrMap = Object.fromEntries(
+    salons.map((s) => [s.id, s.nome])
+  );
 
   // all-time visits for "last visit" per salon per rep
-  const { data: allVisits } = await supabase
+  const { data: allVisitsRaw } = await supabase
     .from("salon_visit_log")
     .select("representante_id,salon_id,data")
     .order("data", { ascending: false });
 
   const lastVisitKey: StrMap = {};
-  for (const v of allVisits ?? []) {
+  for (const v of allVisitsRaw ?? []) {
     const key = `${v.representante_id}:${v.salon_id}`;
-    if (!lastVisitKey[key]) lastVisitKey[key] = v.data;
+    if (!lastVisitKey[key]) lastVisitKey[key] = toStr(v.data);
   }
 
   return {
     reps: repList,
-    salons: (salons ?? []) as Salon[],
-    salonSales: (salonSales ?? []) as SalonSale[],
-    directSales: (directSales ?? []) as DirectSale[],
-    visits: (visits ?? []) as Visit[],
+    salons,
+    salonSales,
+    directSales,
+    visits,
     prodMap,
     salonMap,
     lastVisitKey,
@@ -191,7 +249,7 @@ function AssignSalonModal({
           <Select value={salonId} onValueChange={setSalonId}>
             <SelectTrigger><SelectValue placeholder="Seleccionar salão…" /></SelectTrigger>
             <SelectContent>
-              {available.map((s) => <SelectItem key={s.id} value={s.id}>{s.nome}</SelectItem>)}
+              {available.map((s) => <SelectItem key={s.id} value={s.id}>{String(s.nome || "—")}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
@@ -587,7 +645,7 @@ function RepresentantesPage() {
                   {initials(rep.nome ?? "")}
                 </div>
                 <div>
-                  <p className="font-semibold">{rep.nome ?? "—"}</p>
+                  <p className="font-semibold">{String(rep.nome || "—")}</p>
                   <p className="text-xs text-muted-foreground">{mySalons.length} salão{mySalons.length !== 1 ? "ões" : ""} atribuído{mySalons.length !== 1 ? "s" : ""}</p>
                 </div>
               </div>
@@ -623,7 +681,7 @@ function RepresentantesPage() {
                           ? "bg-red-100 text-red-700 hover:bg-red-100 border border-red-200"
                           : "bg-green-100 text-green-700 hover:bg-green-100 border border-green-200"}
                       >
-                        {s.nome}
+                        {String(s.nome || "—")}
                       </Badge>
                     );
                   })}
