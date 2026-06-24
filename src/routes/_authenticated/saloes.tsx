@@ -582,7 +582,7 @@ function FiadoModal({
         descricao: descricao.trim() || null,
         valor: parseFloat(valor),
         data,
-        produto_id: produtoId || null,
+        produto_id: produtoId === "none" || !produtoId ? null : produtoId,
         status: "pendente",
       });
       if (error) throw error;
@@ -633,8 +633,8 @@ function FiadoModal({
             <Select value={produtoId} onValueChange={setProdutoId}>
               <SelectTrigger><SelectValue placeholder="Seleccionar produto…" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="">— Nenhum —</SelectItem>
-                {(products ?? []).map((p: any) => (
+                <SelectItem value="none">Sem produto específico</SelectItem>
+                {(products ?? []).filter((p: any) => p.id).map((p: any) => (
                   <SelectItem key={p.id} value={p.id}>{String(p.nome ?? "—")}</SelectItem>
                 ))}
               </SelectContent>
