@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Navigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -275,7 +275,12 @@ function ConfirmPayModal({
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 function ComissoesPage() {
+  const { data: currentUser } = useQuery({ queryKey: ["current-user"] });
   const { data, isLoading } = useQuery({ queryKey: ["comissoes"], queryFn: fetchComissoesData });
+
+  if (currentUser && (currentUser as any).role !== "admin") {
+    return <Navigate to="/dashboard" />;
+  }
   const qc = useQueryClient();
 
   const [payTarget, setPayTarget] = useState<PayTarget | null>(null);

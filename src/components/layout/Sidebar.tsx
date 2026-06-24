@@ -31,7 +31,7 @@ const nav: NavItem[] = [
   { to: "/representantes", label: "Representantes", icon: Users, adminOnly: true },
   { to: "/vendas", label: "Vendas", icon: Receipt },
   { to: "/promocoes", label: "Promoções", icon: Tag, adminOnly: true },
-  { to: "/comissoes", label: "Comissões", icon: Coins },
+  { to: "/comissoes", label: "Comissões", icon: Coins, adminOnly: true },
   { to: "/relatorios", label: "Relatórios", icon: BarChart3, adminOnly: true },
   { to: "/configuracoes", label: "Configurações", icon: Settings, adminOnly: true },
 ];
