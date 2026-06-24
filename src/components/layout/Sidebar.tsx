@@ -24,7 +24,7 @@ type NavItem = { to: string; label: string; icon: typeof LayoutDashboard; adminO
 
 const nav: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/produtos", label: "Produtos", icon: Package, adminOnly: true },
+  { to: "/produtos", label: "Produtos", icon: Package },
   { to: "/stock", label: "Stock Central", icon: Warehouse, adminOnly: true },
   { to: "/compras", label: "Compras", icon: ShoppingCart, adminOnly: true },
   { to: "/saloes", label: "Salões", icon: Store },

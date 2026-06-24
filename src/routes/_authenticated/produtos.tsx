@@ -264,6 +264,9 @@ function ProdutosPage() {
     queryFn: fetchProductsWithStock,
   });
 
+  const { data: currentUser } = useQuery({ queryKey: ["current-user"] });
+  const isAdmin = (currentUser as any)?.role === "admin";
+
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("todas");
   const [soAlertas, setSoAlertas] = useState(false);
@@ -275,7 +278,10 @@ function ProdutosPage() {
   const emAlerta = ativos.filter((p) => p.stock_qg < p.unidade_min_stock);
   const valorCusto = ativos.reduce((s, p) => s + p.preco_custo * p.stock_qg, 0);
 
+  const categorias = Array.from(new Set(products.map((p) => p.categoria))).sort();
+
   const filtered = products.filter((p) => {
+    if (!isAdmin && !p.ativo) return false; // representantes só vêem activos
     if (catFilter !== "todas" && p.categoria !== catFilter) return false;
     if (soAlertas && p.stock_qg >= p.unidade_min_stock) return false;
     if (search && !p.nome.toLowerCase().includes(search.toLowerCase())) return false;
@@ -284,13 +290,94 @@ function ProdutosPage() {
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-  const categorias = Array.from(new Set(products.map((p) => p.categoria))).sort();
 
-  function openNew() { setSelected(null); setModalOpen(true); }
   function openEdit(p: ProductWithStock) { setSelected(p); setModalOpen(true); }
 
   useEffect(() => { setPage(0); }, [search, catFilter, soAlertas]);
 
+  // ── Vista simplificada para representantes ───────────────────────────────────
+  if (!isAdmin) {
+    return (
+      <div className="space-y-8">
+        <header>
+          <p className="text-sm uppercase tracking-[0.2em] text-muted-foreground">Catálogo</p>
+          <h1 className="text-3xl md:text-4xl font-display font-semibold mt-1">Catálogo de Produtos</h1>
+          <p className="text-muted-foreground mt-2">Produtos disponíveis para transferência.</p>
+        </header>
+
+        <section className="space-y-4">
+          <div className="flex flex-wrap gap-3 items-center">
+            <Input
+              className="w-56"
+              placeholder="Pesquisar por nome…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <Select value={catFilter} onValueChange={setCatFilter}>
+              <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todas">Todas as categorias</SelectItem>
+                {categorias.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <Card className="overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-primary hover:bg-primary">
+                  <TableHead className="text-primary-foreground">Nome</TableHead>
+                  <TableHead className="text-primary-foreground">Categoria</TableHead>
+                  <TableHead className="text-primary-foreground text-right">Preço Venda</TableHead>
+                  <TableHead className="text-primary-foreground text-center">Disponível</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isLoading && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-center text-muted-foreground py-10">A carregar…</TableCell>
+                  </TableRow>
+                )}
+                {!isLoading && paginated.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-center text-muted-foreground py-10">Nenhum produto encontrado.</TableCell>
+                  </TableRow>
+                )}
+                {paginated.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell className="font-medium">{p.nome}</TableCell>
+                    <TableCell className="text-muted-foreground">{p.categoria}</TableCell>
+                    <TableCell className="text-right">{eur(p.preco_venda)}</TableCell>
+                    <TableCell className="text-center">
+                      {p.stock_qg > 0
+                        ? <Badge className="bg-green-600 text-white hover:bg-green-600">Em stock</Badge>
+                        : <Badge className="bg-red-600 text-white hover:bg-red-600">Sem stock</Badge>}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between text-sm text-muted-foreground">
+              <span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} de {filtered.length}</span>
+              <div className="flex gap-1">
+                <Button variant="outline" size="icon" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="icon" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+    );
+  }
+
+  // ── Vista completa para admin ────────────────────────────────────────────────
   const kpis = [
     { label: "Total Produtos", value: products.length, icon: Package },
     { label: "Activos", value: ativos.length, icon: TrendingUp },
@@ -308,7 +395,7 @@ function ProdutosPage() {
         </div>
         <Button
           className="bg-accent text-accent-foreground hover:bg-accent/90 shrink-0 mt-2"
-          onClick={openNew}
+          onClick={() => { setSelected(null); setModalOpen(true); }}
         >
           <Plus className="h-4 w-4 mr-2" /> Novo Produto
         </Button>
@@ -322,9 +409,7 @@ function ProdutosPage() {
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wider">{k.label}</p>
-                  <p className="text-2xl font-display font-semibold mt-2">
-                    {isLoading ? "…" : k.value}
-                  </p>
+                  <p className="text-2xl font-display font-semibold mt-2">{isLoading ? "…" : k.value}</p>
                 </div>
                 <div className="h-10 w-10 rounded-full bg-secondary text-primary flex items-center justify-center">
                   <Icon className="h-5 w-5" />
@@ -372,29 +457,19 @@ function ProdutosPage() {
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-10">
-                    A carregar…
-                  </TableCell>
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-10">A carregar…</TableCell>
                 </TableRow>
               )}
               {!isLoading && paginated.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-10">
-                    Nenhum produto encontrado.
-                  </TableCell>
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-10">Nenhum produto encontrado.</TableCell>
                 </TableRow>
               )}
               {paginated.map((p) => (
-                <TableRow
-                  key={p.id}
-                  className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => openEdit(p)}
-                >
+                <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openEdit(p)}>
                   <TableCell className="font-medium">
                     {p.nome}
-                    {!p.ativo && (
-                      <span className="ml-2 text-xs text-muted-foreground">(inactivo)</span>
-                    )}
+                    {!p.ativo && <span className="ml-2 text-xs text-muted-foreground">(inactivo)</span>}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{p.categoria}</TableCell>
                   <TableCell className="text-right">{eur(p.preco_custo)}</TableCell>
@@ -412,24 +487,12 @@ function ProdutosPage() {
 
         {totalPages > 1 && (
           <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>
-              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} de {filtered.length}
-            </span>
+            <span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} de {filtered.length}</span>
             <div className="flex gap-1">
-              <Button
-                variant="outline"
-                size="icon"
-                disabled={page === 0}
-                onClick={() => setPage((p) => p - 1)}
-              >
+              <Button variant="outline" size="icon" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                disabled={page >= totalPages - 1}
-                onClick={() => setPage((p) => p + 1)}
-              >
+              <Button variant="outline" size="icon" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>
                 <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
@@ -437,11 +500,7 @@ function ProdutosPage() {
         )}
       </section>
 
-      <ProductModal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        product={selected}
-      />
+      <ProductModal open={modalOpen} onClose={() => setModalOpen(false)} product={selected} />
     </div>
   );
 }
