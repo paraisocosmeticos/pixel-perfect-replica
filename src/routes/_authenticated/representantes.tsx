@@ -230,6 +230,18 @@ function RepSheet({
   open: boolean;
   onClose: () => void;
 }) {
+  const { data: saloes } = useQuery({
+    queryKey: ["rep-saloes", rep?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("salons")
+        .select("id,nome,ativo")
+        .eq("representante_id", rep!.id);
+      return data ?? [];
+    },
+    enabled: !!rep,
+  });
+
   if (!rep) return null;
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
@@ -239,7 +251,12 @@ function RepSheet({
         </SheetHeader>
         <div className="p-4 space-y-4">
           <p className="text-sm">Email: {String(rep.email ?? "—")}</p>
-          <p className="text-sm text-muted-foreground">ID: {String(rep.id ?? "—")}</p>
+          <div>
+            <p className="font-medium text-sm">Salões atribuídos:</p>
+            {(saloes ?? []).map((s) => (
+              <p key={String(s.id)} className="text-sm">{String(s.nome ?? "—")}</p>
+            ))}
+          </div>
         </div>
       </SheetContent>
     </Sheet>
