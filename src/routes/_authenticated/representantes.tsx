@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Component, type ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -34,11 +34,12 @@ type DirectSale = {
 type Visit = { id: string; data: string; notas: string | null; salon_id: string; representante_id: string };
 
 function eur(v: number) {
-  return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(v);
+  return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(Number(v) || 0);
 }
 
-function fmtDate(s: string) {
-  return new Date(s).toLocaleDateString("pt-PT");
+function fmtDate(s: string | null | undefined) {
+  if (!s) return "—";
+  try { return new Date(s).toLocaleDateString("pt-PT"); } catch { return "—"; }
 }
 
 function initials(nome: string | null | undefined) {
@@ -46,8 +47,37 @@ function initials(nome: string | null | undefined) {
   return nome.split(" ").slice(0, 2).map((w) => w[0] ?? "").join("").toUpperCase() || "?";
 }
 
-function daysSince(d: string) {
+function daysSince(d: string | null | undefined) {
+  if (!d) return 999;
   return Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+}
+
+// Plain-object maps (serialization-safe — React Query can cache without losing .get())
+type StrMap = Record<string, string>;
+
+function safeStr(v: unknown): string {
+  if (v == null) return "—";
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return String(v);
+  return "—";
+}
+
+// ── ErrorBoundary ─────────────────────────────────────────────────────────────
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+  constructor(props: any) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e: Error) { return { error: e.message }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-4 text-sm text-red-500 border border-red-200 rounded">
+          <p className="font-semibold">Erro ao abrir ficha</p>
+          <p className="font-mono text-xs mt-1">{this.state.error}</p>
+          <button className="mt-2 underline" onClick={() => this.setState({ error: null })}>Fechar</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 async function fetchRepData() {
@@ -75,8 +105,8 @@ async function fetchRepData() {
     ? await supabase.from("products").select("id,nome").in("id", prodIds)
     : { data: [] };
 
-  const prodMap = new Map((products ?? []).map((p: any) => [p.id, p.nome]));
-  const salonMap = new Map((salons ?? []).map((s: Salon) => [s.id, s.nome]));
+  const prodMap: StrMap = Object.fromEntries((products ?? []).map((p: any) => [p.id, String(p.nome ?? "")]));
+  const salonMap: StrMap = Object.fromEntries((salons ?? []).map((s: Salon) => [s.id, String(s.nome ?? "")]));
 
   // all-time visits for "last visit" per salon per rep
   const { data: allVisits } = await supabase
@@ -84,10 +114,10 @@ async function fetchRepData() {
     .select("representante_id,salon_id,data")
     .order("data", { ascending: false });
 
-  const lastVisitKey = new Map<string, string>(); // `${repId}:${salonId}` → date
+  const lastVisitKey: StrMap = {};
   for (const v of allVisits ?? []) {
     const key = `${v.representante_id}:${v.salon_id}`;
-    if (!lastVisitKey.has(key)) lastVisitKey.set(key, v.data);
+    if (!lastVisitKey[key]) lastVisitKey[key] = v.data;
   }
 
   return {
@@ -237,7 +267,7 @@ function RepSheet({
               <div className="space-y-2 mb-3">
                 {mySalons.length === 0 && <p className="text-sm text-muted-foreground">Nenhum salão atribuído.</p>}
                 {mySalons.map((s) => {
-                  const lv = d.lastVisitKey.get(`${rep.id}:${s.id}`) ?? null;
+                  const lv = d.lastVisitKey[`${rep.id}:${s.id}`] ?? null;
                   const late = !lv || daysSince(lv) > 15;
                   return (
                     <div key={s.id} className="flex items-center justify-between gap-2 py-2 border-b last:border-0">
@@ -276,8 +306,8 @@ function RepSheet({
                       {mySalonSales.map((s) => (
                         <TableRow key={s.id}>
                           <TableCell>{s.data ? fmtDate(s.data) : "—"}</TableCell>
-                          <TableCell>{d.salonMap.get(s.salon_id) ?? "—"}</TableCell>
-                          <TableCell>{d.prodMap.get(s.produto_id) ?? "—"}</TableCell>
+                          <TableCell>{d.salonMap[s.salon_id] ?? "—"}</TableCell>
+                          <TableCell>{d.prodMap[s.produto_id] ?? "—"}</TableCell>
                           <TableCell className="text-right">{eur(Number(s.preco_final) || 0)}</TableCell>
                           <TableCell className="text-right">{eur(Number(s.comissao_rep) || 0)}</TableCell>
                         </TableRow>
@@ -304,7 +334,7 @@ function RepSheet({
                       {myDirectSales.map((s) => (
                         <TableRow key={s.id}>
                           <TableCell>{s.data ? fmtDate(s.data) : "—"}</TableCell>
-                          <TableCell>{d.prodMap.get(s.produto_id) ?? "—"}</TableCell>
+                          <TableCell>{d.prodMap[s.produto_id] ?? "—"}</TableCell>
                           <TableCell>{s.cliente_nome ?? "—"}</TableCell>
                           <TableCell className="text-right">{eur(Number(s.preco_final) || 0)}</TableCell>
                           <TableCell className="text-right">{eur(Number(s.comissao_rep) || 0)}</TableCell>
@@ -323,7 +353,7 @@ function RepSheet({
                       <Card key={v.id} className="p-3">
                         <div className="flex items-center justify-between">
                           <span className="text-sm font-medium">{v.data ? fmtDate(v.data) : "—"}</span>
-                          <span className="text-xs text-muted-foreground">{d.salonMap.get(v.salon_id) ?? "—"}</span>
+                          <span className="text-xs text-muted-foreground">{d.salonMap[v.salon_id] ?? "—"}</span>
                         </div>
                         {v.notas && <p className="text-xs text-muted-foreground mt-1">{v.notas}</p>}
                       </Card>
@@ -558,7 +588,7 @@ function RepresentantesPage() {
               {mySalons.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                   {mySalons.map((s) => {
-                    const lv = data?.lastVisitKey.get(`${rep.id}:${s.id}`) ?? null;
+                    const lv = data?.lastVisitKey[`${rep.id}:${s.id}`] ?? null;
                     const late = !lv || daysSince(lv) > 15;
                     return (
                       <Badge
@@ -578,7 +608,9 @@ function RepresentantesPage() {
         })}
       </section>
 
-      <RepSheet rep={selected} onClose={() => setSelected(null)} d={data} />
+      <ErrorBoundary>
+        <RepSheet rep={selected} onClose={() => setSelected(null)} d={data} />
+      </ErrorBoundary>
       <NovaRepModal open={newOpen} onClose={() => setNewOpen(false)} />
     </div>
   );
