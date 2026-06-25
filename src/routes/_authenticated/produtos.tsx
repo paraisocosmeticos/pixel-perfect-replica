@@ -267,6 +267,17 @@ function ProdutosPage() {
   const { data: currentUser } = useQuery({ queryKey: ["current-user"] });
   const isAdmin = (currentUser as any)?.role === "admin";
 
+  const { data: custoMedioRows = [] } = useQuery({
+    queryKey: ["custo-medio"],
+    queryFn: async () => {
+      const { data } = await (supabase as any).from("produto_custo_medio").select("produto_id,custo_medio,preco_custo");
+      return (data ?? []) as { produto_id: string; custo_medio: number; preco_custo: number }[];
+    },
+    enabled: isAdmin,
+  });
+
+  const custoMedioMap = new Map(custoMedioRows.map((r) => [r.produto_id, Number(r.custo_medio)]));
+
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("todas");
   const [soAlertas, setSoAlertas] = useState(false);
@@ -448,6 +459,7 @@ function ProdutosPage() {
                 <TableHead className="text-primary-foreground">Nome</TableHead>
                 <TableHead className="text-primary-foreground">Categoria</TableHead>
                 <TableHead className="text-primary-foreground text-right">Preço Custo</TableHead>
+                <TableHead className="text-primary-foreground text-right">Custo Médio Real</TableHead>
                 <TableHead className="text-primary-foreground text-right">Preço Venda</TableHead>
                 <TableHead className="text-primary-foreground text-right">Margem %</TableHead>
                 <TableHead className="text-primary-foreground text-right">Stock QG</TableHead>
@@ -457,30 +469,43 @@ function ProdutosPage() {
             <TableBody>
               {isLoading && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-10">A carregar…</TableCell>
+                  <TableCell colSpan={8} className="text-center text-muted-foreground py-10">A carregar…</TableCell>
                 </TableRow>
               )}
               {!isLoading && paginated.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-10">Nenhum produto encontrado.</TableCell>
+                  <TableCell colSpan={8} className="text-center text-muted-foreground py-10">Nenhum produto encontrado.</TableCell>
                 </TableRow>
               )}
-              {paginated.map((p) => (
-                <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openEdit(p)}>
-                  <TableCell className="font-medium">
-                    {p.nome}
-                    {!p.ativo && <span className="ml-2 text-xs text-muted-foreground">(inactivo)</span>}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{p.categoria}</TableCell>
-                  <TableCell className="text-right">{eur(p.preco_custo)}</TableCell>
-                  <TableCell className="text-right">{eur(p.preco_venda)}</TableCell>
-                  <TableCell className="text-right">{margem(p.preco_custo, p.preco_venda)}%</TableCell>
-                  <TableCell className="text-right">{p.stock_qg}</TableCell>
-                  <TableCell className="text-center">
-                    <StatusBadge stock={p.stock_qg} min={p.unidade_min_stock} />
-                  </TableCell>
-                </TableRow>
-              ))}
+              {paginated.map((p) => {
+                const cm = custoMedioMap.get(p.id);
+                const cmColor = cm === undefined
+                  ? "text-muted-foreground"
+                  : cm < p.preco_custo
+                    ? "text-green-600 font-semibold"
+                    : cm > p.preco_custo
+                      ? "text-red-600 font-semibold"
+                      : "text-muted-foreground";
+                return (
+                  <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openEdit(p)}>
+                    <TableCell className="font-medium">
+                      {p.nome}
+                      {!p.ativo && <span className="ml-2 text-xs text-muted-foreground">(inactivo)</span>}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{p.categoria}</TableCell>
+                    <TableCell className="text-right">{eur(p.preco_custo)}</TableCell>
+                    <TableCell className={`text-right ${cmColor}`}>
+                      {cm !== undefined ? eur(cm) : "—"}
+                    </TableCell>
+                    <TableCell className="text-right">{eur(p.preco_venda)}</TableCell>
+                    <TableCell className="text-right">{margem(p.preco_custo, p.preco_venda)}%</TableCell>
+                    <TableCell className="text-right">{p.stock_qg}</TableCell>
+                    <TableCell className="text-center">
+                      <StatusBadge stock={p.stock_qg} min={p.unidade_min_stock} />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </Card>

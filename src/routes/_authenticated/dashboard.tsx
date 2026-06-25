@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Package, Store, Receipt, Coins, AlertTriangle } from "lucide-react";
+import { Package, Store, Receipt, Coins, AlertTriangle, TrendingUp } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({
@@ -17,17 +17,27 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 
 async function fetchOverview() {
   const monthStart = new Date(new Date().setDate(1)).toISOString().slice(0, 10);
-  const [products, salons, sales, directSales, stock] = await Promise.all([
+  const [products, salons, sales, directSales, stock, custoMedioRaw] = await Promise.all([
     supabase.from("products").select("id", { count: "exact", head: true }),
     supabase.from("salons").select("id", { count: "exact", head: true }).eq("ativo", true),
-    supabase.from("salon_sales").select("preco_final, comissao_rep").gte("data", monthStart),
-    supabase.from("rep_direct_sales").select("preco_final, comissao_rep").gte("data", monthStart),
+    supabase.from("salon_sales").select("produto_id,quantidade,preco_final,comissao_rep").gte("data", monthStart),
+    supabase.from("rep_direct_sales").select("produto_id,quantidade,preco_final,comissao_rep").gte("data", monthStart),
     supabase.from("stock_central").select("*"),
+    (supabase as any).from("produto_custo_medio").select("produto_id,custo_medio"),
   ]);
 
   const allSales = [...(sales.data ?? []), ...(directSales.data ?? [])];
   const revenue = allSales.reduce((s, r: any) => s + Number(r.preco_final ?? 0), 0);
   const commissions = allSales.reduce((s, r: any) => s + Number(r.comissao_rep ?? 0), 0);
+
+  const custoMedioMap = new Map(
+    ((custoMedioRaw.data ?? []) as any[]).map((r) => [r.produto_id, Number(r.custo_medio)]),
+  );
+  const custoVendas = allSales.reduce((s, r: any) => {
+    const cm = custoMedioMap.get(r.produto_id) ?? 0;
+    return s + cm * Number(r.quantidade ?? 0);
+  }, 0);
+  const lucroEstimado = revenue - custoVendas;
 
   const lowStock = (stock.data ?? []).filter(
     (r: any) => Number(r.stock_qg) < Number(r.unidade_min_stock),
@@ -38,6 +48,7 @@ async function fetchOverview() {
     salonsCount: salons.count ?? 0,
     monthRevenue: revenue,
     monthCommissions: commissions,
+    lucroEstimado,
     lowStock,
   };
 }
@@ -54,6 +65,7 @@ function DashboardPage() {
     { label: "Salões activos", value: data?.salonsCount ?? "—", icon: Store },
     { label: "Receita do mês", value: data ? eur(data.monthRevenue) : "—", icon: Receipt },
     { label: "Comissões do mês", value: data ? eur(data.monthCommissions) : "—", icon: Coins },
+    { label: "Lucro Estimado", value: data ? eur(data.lucroEstimado) : "—", icon: TrendingUp },
   ];
 
   return (
@@ -64,7 +76,7 @@ function DashboardPage() {
         <p className="text-muted-foreground mt-2">Visão geral do negócio em tempo real.</p>
       </header>
 
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {stats.map((s) => {
           const Icon = s.icon;
           return (

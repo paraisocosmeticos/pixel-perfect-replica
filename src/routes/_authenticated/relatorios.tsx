@@ -132,6 +132,13 @@ function CustomTooltip({ active, payload, label }: any) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 function RelatoriosPage() {
   const { data: base, isLoading } = useQuery({ queryKey: ["relatorios-base"], queryFn: fetchRelatoriosBase });
+  const { data: custoMedioRows = [] } = useQuery({
+    queryKey: ["custo-medio"],
+    queryFn: async () => {
+      const { data } = await (supabase as any).from("produto_custo_medio").select("produto_id,custo_medio");
+      return (data ?? []) as { produto_id: string; custo_medio: number }[];
+    },
+  });
 
   const [period, setPeriod] = useState("este-mes");
   const [customFrom, setCustomFrom] = useState("");
@@ -181,9 +188,17 @@ function RelatoriosPage() {
     [...filtSalon, ...filtDirect].reduce((s: number, r: any) => s + Number(r.preco_final), 0),
     [filtSalon, filtDirect]);
 
-  const custoTotal = useMemo(() =>
-    filtPurchases.reduce((s: number, p: any) => s + Number(p.preco_custo_unit) * Number(p.quantidade), 0),
-    [filtPurchases]);
+  // Custo real das vendas do período: quantidade_vendida × custo_médio_ponderado
+  const custoMedioMap = useMemo(() =>
+    new Map(custoMedioRows.map((r) => [r.produto_id, Number(r.custo_medio)])),
+    [custoMedioRows]);
+
+  const custoTotal = useMemo(() => {
+    return [...filtSalon, ...filtDirect].reduce((s: number, r: any) => {
+      const cm = custoMedioMap.get(r.produto_id) ?? 0;
+      return s + cm * Number(r.quantidade);
+    }, 0);
+  }, [filtSalon, filtDirect, custoMedioMap]);
 
   const lucroBruto = faturado - custoTotal;
   const margemPct = faturado > 0 ? (lucroBruto / faturado) * 100 : 0;
@@ -200,31 +215,24 @@ function RelatoriosPage() {
   // ── Chart: faturado por mês (6m) ─────────────────────────────────────────
   const monthlyData = useMemo(() => {
     if (!base) return [];
-    const map = new Map<string, { faturado: number; lucro: number }>();
+    const map = new Map<string, { faturado: number; custo: number }>();
     for (const s of [...base.salonSales, ...base.directSales] as any[]) {
       const m = s.data.slice(0, 7);
-      const cur = map.get(m) ?? { faturado: 0, lucro: 0 };
+      const cur = map.get(m) ?? { faturado: 0, custo: 0 };
       cur.faturado += Number(s.preco_final);
+      const cm = custoMedioMap.get(s.produto_id) ?? 0;
+      cur.custo += cm * Number(s.quantidade);
       map.set(m, cur);
     }
-    // subtract costs
-    for (const p of base.purchases as any[]) {
-      const m = p.data_compra.slice(0, 7);
-      const cur = map.get(m) ?? { faturado: 0, lucro: 0 };
-      cur.lucro -= Number(p.preco_custo_unit) * Number(p.quantidade);
-      map.set(m, cur);
-    }
-    // add faturado to lucro
-    for (const [m, v] of map) { v.lucro += v.faturado; }
     return Array.from(map.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .slice(-6)
       .map(([m, v]) => ({
         mes: new Date(m + "-01").toLocaleDateString("pt-PT", { month: "short", year: "2-digit" }),
         Faturado: Math.round(v.faturado * 100) / 100,
-        Lucro: Math.round(v.lucro * 100) / 100,
+        Lucro: Math.round((v.faturado - v.custo) * 100) / 100,
       }));
-  }, [base]);
+  }, [base, custoMedioMap]);
 
   // ── Chart: top 5 produtos ─────────────────────────────────────────────────
   const top5Products = useMemo(() => {
