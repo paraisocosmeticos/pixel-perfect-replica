@@ -13,7 +13,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Store, AlertTriangle, Banknote, Coins, Plus, MapPin, Phone, User, Calendar, CreditCard } from "lucide-react";
+import { Store, AlertTriangle, Banknote, Coins, Plus, MapPin, Phone, User, Calendar, CreditCard, ClipboardList } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { ProductCombobox } from "@/components/ui/product-combobox";
 
@@ -80,7 +81,7 @@ async function fetchSaloesData() {
     supabase.from("salon_visit_log").select("*").order("data", { ascending: false }),
     supabase.from("transfers").select("*").order("data", { ascending: false }),
     supabase.from("salon_sales").select("*").order("data", { ascending: false }),
-    supabase.from("products").select("id,nome"),
+    supabase.from("products").select("id,nome,preco_venda"),
     supabase.from("returns").select("*").order("data", { ascending: false }),
   ]);
 
@@ -88,6 +89,7 @@ async function fetchSaloesData() {
   const repList: Rep[] = (reps ?? []).map((p: any) => ({ id: p.id, nome: p.nome }));
   const repMap = new Map(repList.map((r) => [r.id, r.nome]));
   const prodMap = new Map((products ?? []).map((p: any) => [p.id, p.nome]));
+  const prodPrecoMap = new Map((products ?? []).map((p: any) => [p.id, Number(p.preco_venda ?? 0)]));
 
   // last visit per salon
   const lastVisitMap = new Map<string, string>();
@@ -113,6 +115,7 @@ async function fetchSaloesData() {
     repList,
     repMap,
     prodMap,
+    prodPrecoMap,
     visits: (visits ?? []) as (Visit & { salon_id: string })[],
     transfers: (transfers ?? []) as (Transfer & { salon_id: string })[],
     sales: (sales ?? []) as (SalonSale & { salon_id: string })[],
@@ -656,6 +659,260 @@ function FiadoModal({
   );
 }
 
+// ── Salon Inventário Modal ────────────────────────────────────────────────────
+const MOTIVOS_INV = [
+  "Venda não registada",
+  "Produto danificado",
+  "Produto perdido",
+  "Correcção de contagem",
+  "Outro",
+];
+
+type InvRow = {
+  produto_id: string;
+  nome: string;
+  stockApp: number;
+  stockReal: string;
+  motivo: string;
+};
+
+function SalonInventarioModal({
+  open,
+  onClose,
+  salonId,
+  salonNome,
+  salonStock,
+  prodMap,
+  prodPrecoMap,
+}: {
+  open: boolean;
+  onClose: () => void;
+  salonId: string;
+  salonNome: string;
+  salonStock: { produto_id: string; qty: number }[];
+  prodMap: Map<string, string>;
+  prodPrecoMap: Map<string, number>;
+}) {
+  const qc = useQueryClient();
+  const [dataInv, setDataInv] = useState(new Date().toISOString().slice(0, 10));
+  const [rows, setRows] = useState<InvRow[]>([]);
+  const [search, setSearch] = useState("");
+  const [soDiferencas, setSoDiferencas] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setDataInv(new Date().toISOString().slice(0, 10));
+      setSearch("");
+      setSoDiferencas(false);
+      setRows(
+        salonStock
+          .filter((s) => s.qty > 0)
+          .map((s) => ({
+            produto_id: s.produto_id,
+            nome: prodMap.get(s.produto_id) ?? s.produto_id,
+            stockApp: s.qty,
+            stockReal: String(s.qty),
+            motivo: "",
+          }))
+          .sort((a, b) => a.nome.localeCompare(b.nome, "pt")),
+      );
+    }
+  }, [open, salonStock, prodMap]);
+
+  function setRow(idx: number, field: keyof InvRow, value: string) {
+    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, [field]: value } : r)));
+  }
+
+  const visible = rows
+    .map((r, idx) => ({ ...r, idx }))
+    .filter((r) => {
+      if (search && !r.nome.toLowerCase().includes(search.toLowerCase())) return false;
+      const real = parseInt(r.stockReal) || 0;
+      if (soDiferencas && real === r.stockApp) return false;
+      return true;
+    });
+
+  const comDiferenca = rows.filter((r) => {
+    const real = parseInt(r.stockReal);
+    return !isNaN(real) && real !== r.stockApp;
+  });
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const today = new Date().toISOString().slice(0, 10);
+
+      const transferInserts: any[] = [];
+      const saleInserts: any[] = [];
+
+      for (const r of comDiferenca) {
+        const real = parseInt(r.stockReal);
+        const diff = real - r.stockApp;
+        if (diff > 0) {
+          transferInserts.push({
+            salon_id: salonId,
+            produto_id: r.produto_id,
+            quantidade: diff,
+            data: dataInv,
+            nota: `Ajuste inventário — ${r.motivo || "Correcção de contagem"}`,
+            representante_id: session?.user?.id ?? null,
+          });
+        } else {
+          saleInserts.push({
+            salon_id: salonId,
+            produto_id: r.produto_id,
+            quantidade: Math.abs(diff),
+            preco_venda: prodPrecoMap.get(r.produto_id) ?? 0,
+            data: dataInv,
+            cliente_nome: `Inventário — ${r.motivo || "Correcção de contagem"}`,
+          });
+        }
+      }
+
+      if (transferInserts.length > 0) {
+        const { error } = await supabase.from("transfers").insert(transferInserts);
+        if (error) throw error;
+      }
+      if (saleInserts.length > 0) {
+        const { error } = await supabase.from("salon_sales").insert(saleInserts);
+        if (error) throw error;
+      }
+
+      // Log da visita — só se não houver visita hoje para este salão
+      const { data: existingVisit } = await supabase
+        .from("salon_visit_log")
+        .select("id")
+        .eq("salon_id", salonId)
+        .eq("data", today)
+        .maybeSingle();
+      if (!existingVisit) {
+        await supabase.from("salon_visit_log").insert({
+          salon_id: salonId,
+          representante_id: session?.user?.id ?? null,
+          data: today,
+          notas: "Inventário realizado",
+        });
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["saloes"] });
+      toast.success(`Inventário concluído! ${comDiferenca.length} ajuste(s) criado(s).`);
+      onClose();
+    },
+    onError: (e: any) => toast.error("Erro ao confirmar inventário", { description: e.message }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Inventário — {salonNome}</DialogTitle>
+        </DialogHeader>
+
+        <div className="flex flex-wrap gap-3 items-end py-2">
+          <div className="space-y-1">
+            <Label>Data</Label>
+            <Input type="date" value={dataInv} onChange={(e) => setDataInv(e.target.value)} className="w-40" />
+          </div>
+          <div className="flex-1 space-y-1 min-w-[160px]">
+            <Label>Pesquisar produto</Label>
+            <Input placeholder="Filtrar…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none pb-1">
+            <input
+              type="checkbox"
+              checked={soDiferencas}
+              onChange={(e) => setSoDiferencas(e.target.checked)}
+              className="rounded"
+            />
+            Só com diferenças
+          </label>
+        </div>
+
+        <div className="overflow-y-auto flex-1 min-h-0">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-primary hover:bg-primary">
+                <TableHead className="text-primary-foreground">Produto</TableHead>
+                <TableHead className="text-primary-foreground text-right">Stock App</TableHead>
+                <TableHead className="text-primary-foreground text-right">Stock Real</TableHead>
+                <TableHead className="text-primary-foreground text-right">Diferença</TableHead>
+                <TableHead className="text-primary-foreground">Motivo</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {visible.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
+                    {rows.length === 0 ? "Sem stock no salão para inventariar." : "Nenhum produto corresponde ao filtro."}
+                  </TableCell>
+                </TableRow>
+              )}
+              {visible.map((r) => {
+                const real = parseInt(r.stockReal);
+                const diff = isNaN(real) ? null : real - r.stockApp;
+                return (
+                  <TableRow key={r.produto_id}>
+                    <TableCell className="font-medium">{r.nome}</TableCell>
+                    <TableCell className="text-right text-muted-foreground">{r.stockApp}</TableCell>
+                    <TableCell className="text-right w-24">
+                      <Input
+                        type="number"
+                        min={0}
+                        value={r.stockReal}
+                        onChange={(e) => setRow(r.idx, "stockReal", e.target.value)}
+                        className="w-20 text-right h-8 focus-visible:ring-[#b8973a]"
+                      />
+                    </TableCell>
+                    <TableCell className={cn(
+                      "text-right font-semibold",
+                      diff === null || diff === 0 ? "text-muted-foreground" : diff > 0 ? "text-green-600" : "text-red-600",
+                    )}>
+                      {diff === null ? "—" : diff === 0 ? "=" : diff > 0 ? `+${diff}` : String(diff)}
+                    </TableCell>
+                    <TableCell>
+                      {diff !== null && diff !== 0 ? (
+                        <Select value={r.motivo} onValueChange={(v) => setRow(r.idx, "motivo", v)}>
+                          <SelectTrigger className="h-8 text-xs w-48">
+                            <SelectValue placeholder="Motivo…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {MOTIVOS_INV.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* Sticky footer */}
+        <div className="border-t pt-3 mt-1 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex gap-4 text-sm text-muted-foreground">
+            <span>Produtos contados: <strong className="text-foreground">{rows.filter((r) => parseInt(r.stockReal) !== r.stockApp || !isNaN(parseInt(r.stockReal))).length} / {rows.length}</strong></span>
+            <span>Com diferença: <strong className={comDiferenca.length > 0 ? "text-orange-600" : "text-foreground"}>{comDiferenca.length}</strong></span>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose}>Cancelar</Button>
+            <Button
+              className="bg-[#b8973a] text-white hover:bg-[#a07d2e]"
+              onClick={() => mutation.mutate()}
+              disabled={comDiferenca.length === 0 || mutation.isPending}
+            >
+              {mutation.isPending ? "A guardar…" : `Confirmar Inventário (${comDiferenca.length})`}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Salon Sheet ───────────────────────────────────────────────────────────────
 function SalonSheet({
   salon,
@@ -674,6 +931,7 @@ function SalonSheet({
   const [transferOpen, setTransferOpen] = useState(false);
   const [devolucaoOpen, setDevolucaoOpen] = useState(false);
   const [fiadoOpen, setFiadoOpen] = useState(false);
+  const [inventarioOpen, setInventarioOpen] = useState(false);
 
   // Fiado query — só corre para admin
   const { data: fiadoRows } = useQuery({
@@ -800,6 +1058,11 @@ function SalonSheet({
             </TabsList>
 
             <TabsContent value="stock">
+              <div className="flex justify-end mb-3">
+                <Button size="sm" variant="outline" onClick={() => setInventarioOpen(true)}>
+                  <ClipboardList className="h-3 w-3 mr-1" /> Fazer Inventário
+                </Button>
+              </div>
               {salonStock.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Sem stock registado neste salão.</p>
               ) : (
@@ -995,6 +1258,15 @@ function SalonSheet({
       <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} salonId={salon.id} />
       <DevolucaoModal open={devolucaoOpen} onClose={() => setDevolucaoOpen(false)} salonId={salon.id} salonStock={salonStock} prodMap={d.prodMap} />
       {isAdmin && <FiadoModal open={fiadoOpen} onClose={() => setFiadoOpen(false)} salonId={salon.id} />}
+      <SalonInventarioModal
+        open={inventarioOpen}
+        onClose={() => setInventarioOpen(false)}
+        salonId={salon.id}
+        salonNome={salon.nome}
+        salonStock={salonStock}
+        prodMap={d.prodMap}
+        prodPrecoMap={d.prodPrecoMap}
+      />
     </>
   );
 }
