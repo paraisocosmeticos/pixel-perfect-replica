@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Package, AlertTriangle, TrendingUp, Coins, Plus, ChevronLeft, ChevronRight } from "lucide-react";
+import { Package, AlertTriangle, TrendingUp, Coins, Plus, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/produtos")({
@@ -69,6 +69,30 @@ function eur(v: number) {
 function margem(custo: number, venda: number) {
   if (!venda) return "0.0";
   return (((venda - custo) / venda) * 100).toFixed(1);
+}
+
+type SortKey = "nome" | "custo_medio" | "preco_venda" | "margem" | "stock_qg" | "status";
+type SortDir = "asc" | "desc";
+
+const SORT_OPTIONS: { value: string; label: string }[] = [
+  { value: "nome:asc",        label: "Nome (A→Z)" },
+  { value: "nome:desc",       label: "Nome (Z→A)" },
+  { value: "margem:desc",     label: "Maior Margem %" },
+  { value: "margem:asc",      label: "Menor Margem %" },
+  { value: "custo_medio:desc",label: "Maior Custo Médio Real" },
+  { value: "custo_medio:asc", label: "Menor Custo Médio Real" },
+  { value: "preco_venda:desc",label: "Maior Preço Venda" },
+  { value: "preco_venda:asc", label: "Menor Preço Venda" },
+  { value: "stock_qg:desc",   label: "Maior Stock QG" },
+  { value: "stock_qg:asc",    label: "Menor Stock QG" },
+  { value: "status:asc",      label: "Status (Crítico primeiro)" },
+  { value: "status:desc",     label: "Status (OK primeiro)" },
+];
+
+function statusScore(p: ProductWithStock) {
+  if (p.stock_qg <= 0) return 0;
+  if (p.stock_qg < p.unidade_min_stock) return 1;
+  return 2;
 }
 
 function StatusBadge({ stock, min }: { stock: number; min: number }) {
@@ -284,6 +308,39 @@ function ProdutosPage() {
   const [page, setPage] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
   const [selected, setSelected] = useState<ProductWithStock | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("nome");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [dropdownSort, setDropdownSort] = useState("nome:asc");
+
+  function handleDropdownSort(value: string) {
+    setDropdownSort(value);
+    const [k, d] = value.split(":") as [SortKey, SortDir];
+    setSortKey(k);
+    setSortDir(d);
+  }
+
+  function handleColSort(col: SortKey) {
+    if (sortKey === col) {
+      if (sortDir === "asc") {
+        setSortDir("desc");
+        setDropdownSort(`${col}:desc`);
+      } else {
+        setSortKey("nome");
+        setSortDir("asc");
+        setDropdownSort("nome:asc");
+      }
+    } else {
+      setSortKey(col);
+      setSortDir("asc");
+      setDropdownSort(`${col}:asc`);
+    }
+  }
+
+  function margemNum(p: ProductWithStock) {
+    const custo = custoMedioMap.get(p.id) ?? p.preco_custo;
+    if (!p.preco_venda) return 0;
+    return ((p.preco_venda - custo) / p.preco_venda) * 100;
+  }
 
   const ativos = products.filter((p) => p.ativo);
   const emAlerta = ativos.filter((p) => p.stock_qg < p.unidade_min_stock);
@@ -299,12 +356,30 @@ function ProdutosPage() {
     return true;
   });
 
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-  const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const sorted = [...filtered].sort((a, b) => {
+    let cmp = 0;
+    switch (sortKey) {
+      case "nome":        cmp = a.nome.localeCompare(b.nome, "pt"); break;
+      case "preco_venda": cmp = a.preco_venda - b.preco_venda; break;
+      case "stock_qg":    cmp = a.stock_qg - b.stock_qg; break;
+      case "status":      cmp = statusScore(a) - statusScore(b); break;
+      case "margem":      cmp = margemNum(a) - margemNum(b); break;
+      case "custo_medio": {
+        const ca = custoMedioMap.get(a.id) ?? a.preco_custo;
+        const cb = custoMedioMap.get(b.id) ?? b.preco_custo;
+        cmp = ca - cb;
+        break;
+      }
+    }
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
+  const paginated = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   function openEdit(p: ProductWithStock) { setSelected(p); setModalOpen(true); }
 
-  useEffect(() => { setPage(0); }, [search, catFilter, soAlertas]);
+  useEffect(() => { setPage(0); }, [search, catFilter, soAlertas, sortKey, sortDir]);
 
   // ── Vista simplificada para representantes ───────────────────────────────────
   if (!isAdmin) {
@@ -450,20 +525,53 @@ function ProdutosPage() {
             <Switch checked={soAlertas} onCheckedChange={setSoAlertas} />
             Só alertas
           </label>
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-sm text-muted-foreground whitespace-nowrap">Ordenar por:</span>
+            <Select value={dropdownSort} onValueChange={handleDropdownSort}>
+              <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {SORT_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         <Card className="overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow className="bg-primary hover:bg-primary">
-                <TableHead className="text-primary-foreground">Nome</TableHead>
-                <TableHead className="text-primary-foreground">Categoria</TableHead>
-                <TableHead className="text-primary-foreground text-right">Preço Custo</TableHead>
-                <TableHead className="text-primary-foreground text-right">Custo Médio Real</TableHead>
-                <TableHead className="text-primary-foreground text-right">Preço Venda</TableHead>
-                <TableHead className="text-primary-foreground text-right">Margem %</TableHead>
-                <TableHead className="text-primary-foreground text-right">Stock QG</TableHead>
-                <TableHead className="text-primary-foreground text-center">Status</TableHead>
+                {([
+                  { key: "nome" as SortKey,        label: "Nome",            align: "left" },
+                  { key: null,                      label: "Categoria",       align: "left" },
+                  { key: null,                      label: "Preço Custo",     align: "right" },
+                  { key: "custo_medio" as SortKey,  label: "Custo Médio Real",align: "right" },
+                  { key: "preco_venda" as SortKey,  label: "Preço Venda",     align: "right" },
+                  { key: "margem" as SortKey,       label: "Margem %",        align: "right" },
+                  { key: "stock_qg" as SortKey,     label: "Stock QG",        align: "right" },
+                  { key: "status" as SortKey,       label: "Status",          align: "center" },
+                ] as { key: SortKey | null; label: string; align: string }[]).map((col) => (
+                  <TableHead
+                    key={col.label}
+                    className={`text-primary-foreground ${col.align === "right" ? "text-right" : col.align === "center" ? "text-center" : ""} ${col.key ? "cursor-pointer select-none hover:bg-primary/80" : ""}`}
+                    onClick={col.key ? () => handleColSort(col.key!) : undefined}
+                  >
+                    <span className="inline-flex items-center gap-1 justify-end w-full">
+                      {col.align !== "left" && col.key && sortKey === col.key && (
+                        sortDir === "asc"
+                          ? <ChevronUp className="h-3 w-3 shrink-0" style={{ color: "#b8973a" }} />
+                          : <ChevronDown className="h-3 w-3 shrink-0" style={{ color: "#b8973a" }} />
+                      )}
+                      <span className={col.align === "left" ? "flex items-center gap-1" : ""}>
+                        {col.label}
+                        {col.align === "left" && col.key && sortKey === col.key && (
+                          sortDir === "asc"
+                            ? <ChevronUp className="h-3 w-3 shrink-0" style={{ color: "#b8973a" }} />
+                            : <ChevronDown className="h-3 w-3 shrink-0" style={{ color: "#b8973a" }} />
+                        )}
+                      </span>
+                    </span>
+                  </TableHead>
+                ))}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -517,7 +625,7 @@ function ProdutosPage() {
 
         {totalPages > 1 && (
           <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} de {filtered.length}</span>
+            <span>{page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, sorted.length)} de {sorted.length}</span>
             <div className="flex gap-1">
               <Button variant="outline" size="icon" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
                 <ChevronLeft className="h-4 w-4" />
