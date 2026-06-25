@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Receipt, ShoppingCart, Calendar, Sparkles, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ProductCombobox } from "@/components/ui/product-combobox";
+import { ImportarFaturaPDFButton } from "@/components/ImportarFaturaPDF";
 
 export const Route = createFileRoute("/_authenticated/compras")({
   head: () => ({ meta: [{ title: "Compras — Secrets VIP" }] }),
@@ -305,6 +306,8 @@ function NovoCicloModal({ open, onClose }: { open: boolean; onClose: () => void 
 function ComprasPage() {
   const { data, isLoading } = useQuery({ queryKey: ["compras"], queryFn: fetchComprasData });
   const qc = useQueryClient();
+  const { data: currentUser } = useQuery({ queryKey: ["current-user"] });
+  const isAdmin = (currentUser as any)?.role === "admin";
 
   const [cycleFilter, setCycleFilter] = useState("todos");
   const [monthFilter, setMonthFilter] = useState("");
@@ -375,12 +378,15 @@ function ComprasPage() {
           <h1 className="text-3xl md:text-4xl font-display font-semibold mt-1">Compras</h1>
           <p className="text-muted-foreground mt-2">Histórico de compras por ciclo O Boticário.</p>
         </div>
-        <Button
-          className="bg-accent text-accent-foreground hover:bg-accent/90 shrink-0 mt-2"
-          onClick={() => setCompraOpen(true)}
-        >
-          <Plus className="h-4 w-4 mr-2" /> Nova Compra
-        </Button>
+        <div className="flex gap-2 mt-2 shrink-0">
+          {isAdmin && <ImportarFaturaPDFButton cycles={cycles} />}
+          <Button
+            className="bg-accent text-accent-foreground hover:bg-accent/90"
+            onClick={() => setCompraOpen(true)}
+          >
+            <Plus className="h-4 w-4 mr-2" /> Nova Compra
+          </Button>
+        </div>
       </header>
 
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
