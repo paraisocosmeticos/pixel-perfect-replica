@@ -188,7 +188,39 @@ function parseBoticarioRows(rows: PdfItem[][]): ParsedLine[] {
     });
   }
 
-  return results;
+  // ── Merge duplicate product codes ──────────────────────────────────────────
+  // When the same Prod. code appears multiple times (e.g. bonus + paid lines),
+  // merge into one row: sum qty, sum pcb, recalculate unit cost.
+  const merged = new Map<string, ParsedLine>();
+  for (const line of results) {
+    const existing = merged.get(line.codigo);
+    if (!existing) {
+      merged.set(line.codigo, { ...line });
+    } else {
+      const totalQty = existing.quantidade + line.quantidade;
+      const totalPcb = existing.pcb + line.pcb;
+      const totalSubTotal = existing.subTotal + line.subTotal;
+
+      let custUnit: number;
+      if (totalPcb > 0) {
+        custUnit = Math.round((totalPcb / totalQty) * 100) / 100;
+      } else if (existing.pctDesc >= 100 && line.pctDesc >= 100) {
+        custUnit = 0;
+      } else {
+        custUnit = Math.round((totalSubTotal / totalQty) * 100) / 100;
+      }
+
+      merged.set(line.codigo, {
+        ...existing,
+        quantidade: totalQty,
+        pcb: totalPcb,
+        subTotal: totalSubTotal,
+        custUnit,
+      });
+    }
+  }
+
+  return Array.from(merged.values());
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
