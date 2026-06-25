@@ -498,7 +498,12 @@ function ProdutosPage() {
                       {cm !== undefined ? eur(cm) : "—"}
                     </TableCell>
                     <TableCell className="text-right">{eur(p.preco_venda)}</TableCell>
-                    <TableCell className="text-right">{margem(p.preco_custo, p.preco_venda)}%</TableCell>
+                    <TableCell
+                      className={`text-right ${cm !== undefined && cm < p.preco_custo ? "text-green-600 font-semibold" : cm !== undefined && cm > p.preco_custo ? "text-red-600 font-semibold" : ""}`}
+                      title={`Custo padrão: ${eur(p.preco_custo)} | Custo médio real: ${cm !== undefined ? eur(cm) : "—"}`}
+                    >
+                      {margem(cm ?? p.preco_custo, p.preco_venda)}%
+                    </TableCell>
                     <TableCell className="text-right">{p.stock_qg}</TableCell>
                     <TableCell className="text-center">
                       <StatusBadge stock={p.stock_qg} min={p.unidade_min_stock} />
