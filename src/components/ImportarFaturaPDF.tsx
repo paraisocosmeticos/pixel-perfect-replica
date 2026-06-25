@@ -39,11 +39,14 @@ type PreviewRow = ParsedLine & {
   newPrecoVenda: string;
 };
 
-// ── PDF text extraction ────────────────────────────────────────────────────────
-async function extractTextFromPDF(file: File): Promise<string> {
-  // Dynamic import to avoid SSR issues
+// ── PDF text extraction (positional) ─────────────────────────────────────────
+// Returns rows: each row is an array of text tokens sorted left→right by x.
+// Items are grouped by y-coordinate with a 4pt tolerance so that all tokens
+// on the same visual line land in the same row regardless of font size.
+type PdfItem = { text: string; x: number };
+
+async function extractPdfRows(file: File): Promise<PdfItem[][]> {
   const pdfjsLib = await import("pdfjs-dist");
-  // Set worker src — use bundled worker
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
     "pdfjs-dist/build/pdf.worker.min.mjs",
     import.meta.url,
@@ -51,105 +54,130 @@ async function extractTextFromPDF(file: File): Promise<string> {
 
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const texts: string[] = [];
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
+
+  // Collect all items across all pages with their position.
+  // PDF y-axis is bottom-up; we negate y so rows sort top-to-bottom.
+  const raw: { text: string; x: number; sortY: number }[] = [];
+
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
     const content = await page.getTextContent();
-    const pageText = content.items.map((item: any) => item.str).join(" ");
-    texts.push(pageText);
+    const pageH = (page as any).view?.[3] ?? 0; // page height in pts
+
+    for (const item of content.items as any[]) {
+      const str = (item.str ?? "").trim();
+      if (!str) continue;
+      const x: number = item.transform[4];
+      const y: number = item.transform[5];
+      // Convert to top-down: higher page-offset = larger sortY
+      raw.push({ text: str, x, sortY: (p - 1) * 100000 + (pageH - y) });
+    }
   }
-  return texts.join("\n");
+
+  // Group by sortY with 4pt tolerance
+  const Y_TOLERANCE = 4;
+  const buckets: Map<number, { text: string; x: number }[]> = new Map();
+
+  for (const item of raw) {
+    let matched: number | null = null;
+    for (const key of buckets.keys()) {
+      if (Math.abs(item.sortY - key) <= Y_TOLERANCE) { matched = key; break; }
+    }
+    const key = matched ?? item.sortY;
+    const bucket = buckets.get(key) ?? [];
+    bucket.push({ text: item.text, x: item.x });
+    buckets.set(key, bucket);
+  }
+
+  // Sort rows top-to-bottom, items left-to-right within each row
+  return Array.from(buckets.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([, items]) => items.sort((a, b) => a.x - b.x));
 }
 
 // ── Parser ────────────────────────────────────────────────────────────────────
-// Boticário invoice columns:
-// Prod. | Catálogo | Descrição | Categoria | Qtd | PVP Un. | Sub Total | % desc.CB | Ganhos CB | PCB a pagar | IVA
+// Fatura columns (left to right):
+// [0] Prod.     — 5-digit product code  ← ALWAYS the first token
+// [1] Catálogo  — 5-digit or alpha code ← ALWAYS skip
+// [2..N-7] Descrição + Categoria (text tokens)
+// last 7 cols: Qtd | PVP Un. | Sub Total | % desc.CB | Ganhos CB | PCB a pagar | IVA
 //
-// Strategy: extract tokens around 5-digit product codes.
-// Each product row starts with a 5-digit code.
-function parseBoticarioText(text: string): ParsedLine[] {
-  const lines = text.split(/\n|\r/).map((l) => l.trim()).filter(Boolean);
-  const results: ParsedLine[] = [];
-
-  // Join all lines into one string for pattern matching
-  const full = lines.join(" ");
-
-  // Pattern: 5-digit code followed by catalog code (alphanumeric), description, category,
-  // then numbers for qty, pvp, subtotal, %desc, ganhos, pcb, iva
-  // We look for sequences: DDDDD (catalog) text... numbers
-  // Since PDF text extraction varies, we use a flexible multi-token approach.
-
-  // Split into tokens
-  const tokens = full.split(/\s+/);
-
-  const ptNum = (s: string): number => {
-    // Portuguese number: 1.234,56 → 1234.56
-    return parseFloat(s.replace(/\./g, "").replace(",", ".")) || 0;
-  };
-
-  const isPtNum = (s: string) => /^-?\d{1,3}(\.\d{3})*(,\d+)?$|^-?\d+(,\d+)?$/.test(s);
+// Numbers in PT format: 1.234,56   Percentages may appear as "100,00" or "100%"
+function parseBoticarioRows(rows: PdfItem[][]): ParsedLine[] {
   const is5Digit = (s: string) => /^\d{5}$/.test(s);
 
-  let i = 0;
-  while (i < tokens.length) {
-    if (!is5Digit(tokens[i])) { i++; continue; }
+  // PT number: strip thousand-dots, replace comma-decimal, strip trailing %
+  const ptNum = (s: string) =>
+    parseFloat(s.replace(/\./g, "").replace(",", ".").replace(/%$/, "")) || 0;
 
-    const codigo = tokens[i];
-    i++;
+  // A token is "numeric" if it looks like a PT number (possibly with %)
+  const isPtNum = (s: string) =>
+    /^-?\d[\d\.,]*(,\d+)?%?$/.test(s) || /^\d{1,3}(\.\d{3})*(,\d+)?%?$/.test(s);
 
-    // Skip catalog code (alphanumeric, not a number block)
-    if (i < tokens.length && !isPtNum(tokens[i])) i++;
+  const results: ParsedLine[] = [];
 
-    // Collect description tokens until we hit a sequence of numbers
-    const descTokens: string[] = [];
-    while (i < tokens.length && !isPtNum(tokens[i])) {
-      descTokens.push(tokens[i]);
-      i++;
-    }
-    const descricaoRaw = descTokens.join(" ");
+  for (const row of rows) {
+    const tokens = row.map((t) => t.text);
+    if (tokens.length < 5) continue;
+    if (!is5Digit(tokens[0])) continue;
 
-    // Last word of description might be the category — heuristic: category is ALL CAPS single word
-    let descricao = descricaoRaw;
-    let categoria = "";
-    const words = descricaoRaw.split(" ");
-    if (words.length > 1) {
-      const last = words[words.length - 1];
-      if (/^[A-ZÁÉÍÓÚÂÊÔÃÕÜÇÑ\-\/]+$/.test(last) && last.length > 2) {
-        categoria = last;
-        descricao = words.slice(0, -1).join(" ");
-      }
-    }
+    const codigo = tokens[0];
+    // tokens[1] = Catálogo code — always skip (may also be 5-digit number)
 
-    // Collect up to 7 numeric tokens: qty, pvp, subTotal, %desc, ganhos, pcb, iva
-    const nums: number[] = [];
-    while (i < tokens.length && nums.length < 7) {
-      if (isPtNum(tokens[i])) {
-        nums.push(ptNum(tokens[i]));
-        i++;
+    // Collect remaining tokens (from index 2 onward)
+    const rest = tokens.slice(2);
+
+    // Split rest into: description tokens (text) + numeric columns (right side)
+    // Strategy: scan from the RIGHT, collect consecutive numeric tokens.
+    // Stop as soon as we hit a non-numeric token from the right.
+    let numStart = rest.length;
+    for (let i = rest.length - 1; i >= 0; i--) {
+      if (isPtNum(rest[i])) {
+        numStart = i;
       } else {
         break;
       }
     }
 
-    if (nums.length < 3) continue; // not enough data
+    const descTokens = rest.slice(0, numStart);
+    const numTokens = rest.slice(numStart);
 
+    if (numTokens.length < 3) continue; // need at least qty, pvp, subTotal
+
+    // Last numeric token is IVA — strip it if we have all 7 columns
+    const nums = numTokens.map(ptNum);
+    // Expected order: Qtd | PVP Un. | Sub Total | % desc.CB | Ganhos CB | PCB a pagar | IVA
     const [quantidade, pvp, subTotal, pctDesc = 0, ganhoscb = 0, pcb = 0] = nums;
+
     if (!quantidade || quantidade <= 0) continue;
 
-    // Calculate unit cost
+    // Description: join text tokens; detect category (trailing ALL-CAPS word)
+    let descricao = descTokens.join(" ").trim();
+    let categoria = "Outros";
+    if (descTokens.length > 0) {
+      const last = descTokens[descTokens.length - 1];
+      if (/^[A-ZÁÉÍÓÚÂÊÔÃÕÇÑ\-\/]{2,}$/.test(last) && !/^\d/.test(last)) {
+        categoria = last;
+        descricao = descTokens.slice(0, -1).join(" ").trim();
+      }
+    }
+
+    // ── Cost logic ──────────────────────────────────────────────────────────
+    // PCB a pagar is the TOTAL for the line. Divide by quantity for unit cost.
     let custUnit: number;
     if (pcb > 0) {
       custUnit = Math.round((pcb / quantidade) * 100) / 100;
     } else if (pctDesc >= 100) {
-      custUnit = 0; // free promotional item
+      custUnit = 0; // fully bonified / promotional
     } else {
+      // Materials / support items the reseller pays without CB discount
       custUnit = Math.round((subTotal / quantidade) * 100) / 100;
     }
 
     results.push({
       codigo,
-      descricao: descricao.trim() || `Produto ${codigo}`,
-      categoria: categoria || "Outros",
+      descricao: descricao || `Produto ${codigo}`,
+      categoria,
       quantidade,
       pvp,
       subTotal,
@@ -212,8 +240,8 @@ function ImportarFaturaPDFModal({
     setParseError("");
     setRows([]);
     try {
-      const text = await extractTextFromPDF(file);
-      const parsed = parseBoticarioText(text);
+      const pdfRows = await extractPdfRows(file);
+      const parsed = parseBoticarioRows(pdfRows);
       if (parsed.length === 0) {
         setParseError("Não foi possível extrair linhas de produto. Verifica se o PDF é da fatura O Boticário.");
         setParsing(false);
