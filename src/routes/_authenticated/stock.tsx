@@ -12,9 +12,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { Package, AlertTriangle, XCircle, Coins, Plus, Trash2 } from "lucide-react";
+import { Package, AlertTriangle, XCircle, Coins, Plus, Trash2, ClipboardList } from "lucide-react";
 import { toast } from "sonner";
 import { ProductCombobox } from "@/components/ui/product-combobox";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/stock")({
   head: () => ({ meta: [{ title: "Stock — Secrets VIP" }] }),
@@ -346,6 +347,284 @@ function CompraModal({
   );
 }
 
+// ── Inventário Modal ──────────────────────────────────────────────────────────
+const MOTIVOS = [
+  "Correcção de contagem",
+  "Produto danificado",
+  "Produto perdido",
+  "Produto encontrado",
+  "Outro",
+];
+
+type InvRow = {
+  produto_id: string;
+  nome: string;
+  categoria: string;
+  stockApp: number;
+  stockReal: string; // string to allow empty input
+  motivo: string;
+};
+
+function InventarioModal({
+  open,
+  onClose,
+  stockRows,
+}: {
+  open: boolean;
+  onClose: () => void;
+  stockRows: (StockRow & { preco_custo: number })[];
+}) {
+  const qc = useQueryClient();
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
+  const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState("todas");
+  const [soiDiferencas, setSoDiferencas] = useState(false);
+  const [rows, setRows] = useState<InvRow[]>([]);
+
+  // Initialise rows from stockRows whenever modal opens
+  useEffect(() => {
+    if (open) {
+      setRows(
+        stockRows.map((r) => ({
+          produto_id: r.produto_id,
+          nome: r.nome,
+          categoria: r.categoria,
+          stockApp: r.stock_qg,
+          stockReal: String(r.stock_qg),
+          motivo: "Correcção de contagem",
+        })),
+      );
+      setSearch("");
+      setCatFilter("todas");
+      setSoDiferencas(false);
+      setData(new Date().toISOString().slice(0, 10));
+    }
+  }, [open, stockRows]);
+
+  function setStockReal(produto_id: string, value: string) {
+    setRows((rs) => rs.map((r) => r.produto_id === produto_id ? { ...r, stockReal: value } : r));
+  }
+
+  function setMotivo(produto_id: string, value: string) {
+    setRows((rs) => rs.map((r) => r.produto_id === produto_id ? { ...r, motivo: value } : r));
+  }
+
+  const categorias = Array.from(new Set(stockRows.map((r) => r.categoria))).sort();
+
+  const filtered = rows.filter((r) => {
+    if (catFilter !== "todas" && r.categoria !== catFilter) return false;
+    if (search && !r.nome.toLowerCase().includes(search.toLowerCase())) return false;
+    const real = parseInt(r.stockReal);
+    if (soiDiferencas && (isNaN(real) || real === r.stockApp)) return false;
+    return true;
+  });
+
+  const rowsWithDiff = rows.filter((r) => {
+    const real = parseInt(r.stockReal);
+    return !isNaN(real) && real !== r.stockApp;
+  });
+  const gains = rowsWithDiff.filter((r) => parseInt(r.stockReal) > r.stockApp);
+  const losses = rowsWithDiff.filter((r) => parseInt(r.stockReal) < r.stockApp);
+  const totalGain = gains.reduce((s, r) => s + (parseInt(r.stockReal) - r.stockApp), 0);
+  const totalLoss = losses.reduce((s, r) => s + (r.stockApp - parseInt(r.stockReal)), 0);
+  const contados = rows.filter((r) => r.stockReal !== "").length;
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const inserts = rowsWithDiff
+        .filter((r) => !isNaN(parseInt(r.stockReal)))
+        .map((r) => {
+          const real = parseInt(r.stockReal);
+          const diff = real - r.stockApp;
+          return {
+            produto_id: r.produto_id,
+            tipo: diff > 0 ? "entrada" : "quebra",
+            quantidade: Math.abs(diff),
+            motivo: r.motivo || "Correcção de contagem",
+          };
+        });
+
+      if (inserts.length === 0) throw new Error("Nenhum ajuste a criar.");
+      const { error } = await supabase.from("stock_adjustments").insert(inserts);
+      if (error) throw error;
+      return inserts.length;
+    },
+    onSuccess: (n) => {
+      qc.invalidateQueries({ queryKey: ["stock"] });
+      toast.success(`Inventário concluído! ${n} ${n === 1 ? "ajuste criado" : "ajustes criados"}.`);
+      onClose();
+    },
+    onError: (e: any) => toast.error("Erro ao confirmar inventário", { description: e.message }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && !mutation.isPending && onClose()}>
+      <DialogContent className="max-w-6xl max-h-[92vh] flex flex-col p-0 gap-0">
+        {/* Header */}
+        <div className="px-6 pt-6 pb-4 border-b shrink-0">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <ClipboardList className="h-5 w-5" /> Inventário de Stock
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground mt-1">
+            Conta os produtos físicos e introduz as quantidades reais.
+          </p>
+
+          {/* Filters + date */}
+          <div className="flex flex-wrap gap-3 mt-4 items-end">
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Data</p>
+              <input
+                type="date"
+                value={data}
+                onChange={(e) => setData(e.target.value)}
+                className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Categoria</p>
+              <Select value={catFilter} onValueChange={setCatFilter}>
+                <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todas">Todas</SelectItem>
+                  {categorias.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Pesquisa</p>
+              <Input
+                className="w-48"
+                placeholder="Nome do produto…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm cursor-pointer select-none pb-1">
+              <input
+                type="checkbox"
+                checked={soiDiferencas}
+                onChange={(e) => setSoDiferencas(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 accent-[#1a3a2a]"
+              />
+              Só com diferenças
+            </label>
+          </div>
+        </div>
+
+        {/* Scrollable table */}
+        <div className="flex-1 overflow-y-auto">
+          <Table>
+            <TableHeader className="sticky top-0 z-10">
+              <TableRow className="bg-primary hover:bg-primary">
+                <TableHead className="text-primary-foreground">Produto</TableHead>
+                <TableHead className="text-primary-foreground">Categoria</TableHead>
+                <TableHead className="text-primary-foreground text-right">Stock App</TableHead>
+                <TableHead className="text-primary-foreground text-right w-28">Stock Real</TableHead>
+                <TableHead className="text-primary-foreground text-right w-24">Diferença</TableHead>
+                <TableHead className="text-primary-foreground w-52">Motivo</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-10">
+                    Nenhum produto encontrado.
+                  </TableCell>
+                </TableRow>
+              )}
+              {filtered.map((r) => {
+                const real = parseInt(r.stockReal);
+                const diff = isNaN(real) ? null : real - r.stockApp;
+                const hasDiff = diff !== null && diff !== 0;
+                return (
+                  <TableRow key={r.produto_id}>
+                    <TableCell className="font-medium">{r.nome}</TableCell>
+                    <TableCell className="text-muted-foreground text-sm">{r.categoria}</TableCell>
+                    <TableCell className="text-right text-muted-foreground">{r.stockApp}</TableCell>
+                    <TableCell className="text-right">
+                      <Input
+                        type="number"
+                        min="0"
+                        value={r.stockReal}
+                        onChange={(e) => setStockReal(r.produto_id, e.target.value)}
+                        className={cn(
+                          "h-8 w-20 text-right ml-auto",
+                          "focus:ring-1 focus:ring-[#b8973a] focus:border-[#b8973a]",
+                        )}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right font-semibold">
+                      {diff === null ? (
+                        <span className="text-muted-foreground text-sm">—</span>
+                      ) : diff === 0 ? (
+                        <span className="text-muted-foreground text-sm">=</span>
+                      ) : diff > 0 ? (
+                        <span className="text-green-600">+{diff}</span>
+                      ) : (
+                        <span className="text-red-600">{diff}</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {hasDiff ? (
+                        <Select value={r.motivo} onValueChange={(v) => setMotivo(r.produto_id, v)}>
+                          <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {MOTIVOS.map((m) => (
+                              <SelectItem key={m} value={m} className="text-xs">{m}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">—</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* Sticky footer summary */}
+        <div className="border-t bg-background px-6 py-4 shrink-0">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex flex-wrap gap-5 text-sm">
+              <span className="text-muted-foreground">
+                Contados: <strong className="text-foreground">{contados}/{rows.length}</strong>
+              </span>
+              <span className="text-muted-foreground">
+                Ajustes: <strong className="text-foreground">{rowsWithDiff.length}</strong> produtos
+              </span>
+              {totalGain > 0 && (
+                <span className="text-green-600 font-medium">+{totalGain} un. ganhos</span>
+              )}
+              {totalLoss > 0 && (
+                <span className="text-red-600 font-medium">−{totalLoss} un. perdidos</span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={onClose} disabled={mutation.isPending}>
+                Cancelar
+              </Button>
+              <Button
+                className="bg-accent text-accent-foreground hover:bg-accent/90"
+                onClick={() => mutation.mutate()}
+                disabled={rowsWithDiff.length === 0 || mutation.isPending}
+              >
+                {mutation.isPending
+                  ? "A confirmar…"
+                  : `Confirmar Inventário (${rowsWithDiff.length})`}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 function StockPage() {
   const { data, isLoading } = useQuery({
@@ -357,10 +636,14 @@ function StockPage() {
   const products = data?.products ?? [];
   const cycles = data?.cycles ?? [];
 
+  const { data: currentUser } = useQuery({ queryKey: ["current-user"] });
+  const isAdmin = (currentUser as any)?.role === "admin";
+
   const [search, setSearch] = useState("");
   const [soAlertas, setSoAlertas] = useState(false);
   const [ajusteOpen, setAjusteOpen] = useState(false);
   const [compraOpen, setCompraOpen] = useState(false);
+  const [inventarioOpen, setInventarioOpen] = useState(false);
 
   const filtered = rows.filter((r) => {
     if (soAlertas && r.stock_qg >= r.unidade_min_stock) return false;
@@ -389,6 +672,11 @@ function StockPage() {
           <p className="text-muted-foreground mt-2">Inventário e movimentos de stock.</p>
         </div>
         <div className="flex gap-2 mt-2 shrink-0">
+          {isAdmin && (
+            <Button variant="outline" onClick={() => setInventarioOpen(true)}>
+              <ClipboardList className="h-4 w-4 mr-2" /> Fazer Inventário
+            </Button>
+          )}
           <Button variant="outline" onClick={() => setAjusteOpen(true)}>
             Ajuste Manual
           </Button>
@@ -488,6 +776,11 @@ function StockPage() {
         onClose={() => setCompraOpen(false)}
         products={products}
         cycles={cycles}
+      />
+      <InventarioModal
+        open={inventarioOpen}
+        onClose={() => setInventarioOpen(false)}
+        stockRows={rows}
       />
     </div>
   );
