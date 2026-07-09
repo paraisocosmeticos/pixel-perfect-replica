@@ -64,21 +64,16 @@ async function fetchVendasData() {
     { data: directSales },
     { data: products },
     { data: salons },
-    { data: roles },
+    { data: repsRaw },
   ] = await Promise.all([
     supabase.from("salon_sales").select("*").order("data", { ascending: false }),
     supabase.from("rep_direct_sales").select("*").order("data", { ascending: false }),
     supabase.from("products").select("id,nome,preco_venda").eq("ativo", true).order("nome"),
     supabase.from("salons").select("id,nome").eq("ativo", true).order("nome"),
-    supabase.from("user_roles").select("user_id").eq("role", "representante"),
+    (supabase as any).rpc("get_representantes"),
   ]);
 
-  const repIds = (roles ?? []).map((r: any) => r.user_id);
-  const { data: profiles } = repIds.length
-    ? await supabase.from("profiles").select("id,nome").in("id", repIds)
-    : { data: [] };
-
-  const reps: Rep[] = (profiles ?? []).map((p: any) => ({ id: p.id, nome: p.nome }));
+  const reps: Rep[] = (repsRaw ?? []).map((p: any) => ({ id: p.id, nome: p.nome }));
   const prodMap = new Map((products ?? []).map((p: Product) => [p.id, p.nome]));
   const salonMap = new Map((salons ?? []).map((s: Salon) => [s.id, s.nome]));
   const repMap = new Map(reps.map((r) => [r.id, r.nome]));
