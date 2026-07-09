@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Package, Store, Receipt, Coins, AlertTriangle, TrendingUp } from "lucide-react";
+import { Package, Store, Receipt, Coins, AlertTriangle, TrendingUp, ShoppingBag } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({
@@ -17,13 +17,14 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 
 async function fetchOverview() {
   const monthStart = new Date(new Date().setDate(1)).toISOString().slice(0, 10);
-  const [products, salons, sales, directSales, stock, custoMedioRaw] = await Promise.all([
+  const [products, salons, sales, directSales, stock, custoMedioRaw, encomendas] = await Promise.all([
     supabase.from("products").select("id", { count: "exact", head: true }),
     supabase.from("salons").select("id", { count: "exact", head: true }).eq("ativo", true),
     supabase.from("salon_sales").select("produto_id,quantidade,preco_final,comissao_rep").gte("data", monthStart),
     supabase.from("rep_direct_sales").select("produto_id,quantidade,preco_final,comissao_rep").gte("data", monthStart),
     supabase.from("stock_central").select("*"),
     (supabase as any).from("produto_custo_medio").select("produto_id,custo_medio"),
+    (supabase as any).from("encomendas").select("id,status"),
   ]);
 
   const allSales = [...(sales.data ?? []), ...(directSales.data ?? [])];
@@ -43,6 +44,10 @@ async function fetchOverview() {
     (r: any) => Number(r.stock_qg) < Number(r.unidade_min_stock),
   );
 
+  const encomendaPendentes = ((encomendas.data ?? []) as any[]).filter(
+    (e) => e.status === "pendente",
+  ).length;
+
   return {
     productsCount: products.count ?? 0,
     salonsCount: salons.count ?? 0,
@@ -50,6 +55,7 @@ async function fetchOverview() {
     monthCommissions: commissions,
     lucroEstimado,
     lowStock,
+    encomendaPendentes,
   };
 }
 
@@ -66,6 +72,7 @@ function DashboardPage() {
     { label: "Receita do mês", value: data ? eur(data.monthRevenue) : "—", icon: Receipt },
     { label: "Comissões do mês", value: data ? eur(data.monthCommissions) : "—", icon: Coins },
     { label: "Lucro Estimado", value: data ? eur(data.lucroEstimado) : "—", icon: TrendingUp },
+    { label: "Encomendas Pendentes", value: data?.encomendaPendentes ?? "—", icon: ShoppingBag },
   ];
 
   return (
@@ -76,7 +83,7 @@ function DashboardPage() {
         <p className="text-muted-foreground mt-2">Visão geral do negócio em tempo real.</p>
       </header>
 
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         {stats.map((s) => {
           const Icon = s.icon;
           return (
