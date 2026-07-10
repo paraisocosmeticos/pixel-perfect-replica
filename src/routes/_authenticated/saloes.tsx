@@ -676,6 +676,12 @@ type InvRow = {
   motivo: string;
 };
 
+type ExtraRow = {
+  key: string;
+  produto_id: string;
+  quantidade: string;
+};
+
 function SalonInventarioModal({
   open,
   onClose,
@@ -684,6 +690,7 @@ function SalonInventarioModal({
   salonStock,
   prodMap,
   prodPrecoMap,
+  allProducts,
 }: {
   open: boolean;
   onClose: () => void;
@@ -692,10 +699,12 @@ function SalonInventarioModal({
   salonStock: { produto_id: string; qty: number }[];
   prodMap: Map<string, string>;
   prodPrecoMap: Map<string, number>;
+  allProducts: { id: string; nome: string }[];
 }) {
   const qc = useQueryClient();
   const [dataInv, setDataInv] = useState(new Date().toISOString().slice(0, 10));
   const [rows, setRows] = useState<InvRow[]>([]);
+  const [extraRows, setExtraRows] = useState<ExtraRow[]>([]);
   const [search, setSearch] = useState("");
   const [soDiferencas, setSoDiferencas] = useState(false);
 
@@ -704,6 +713,7 @@ function SalonInventarioModal({
       setDataInv(new Date().toISOString().slice(0, 10));
       setSearch("");
       setSoDiferencas(false);
+      setExtraRows([]);
       setRows(
         salonStock
           .filter((s) => s.qty > 0)
@@ -723,6 +733,23 @@ function SalonInventarioModal({
     setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, [field]: value } : r)));
   }
 
+  function addExtraRow() {
+    setExtraRows((prev) => [...prev, { key: `extra-${Date.now()}`, produto_id: "", quantidade: "" }]);
+  }
+
+  function setExtraRow(key: string, field: keyof ExtraRow, value: string) {
+    setExtraRows((prev) => prev.map((r) => r.key === key ? { ...r, [field]: value } : r));
+  }
+
+  function removeExtraRow(key: string) {
+    setExtraRows((prev) => prev.filter((r) => r.key !== key));
+  }
+
+  // IDs already in the regular list or other extra rows (for filtering combobox)
+  const existingIds = new Set([
+    ...rows.map((r) => r.produto_id),
+  ]);
+
   const visible = rows
     .map((r, idx) => ({ ...r, idx }))
     .filter((r) => {
@@ -736,6 +763,10 @@ function SalonInventarioModal({
     const real = parseInt(r.stockReal);
     return !isNaN(real) && real !== r.stockApp;
   });
+
+  const validExtraRows = extraRows.filter((r) => r.produto_id && parseInt(r.quantidade) > 0);
+
+  const totalAjustes = comDiferenca.length + validExtraRows.length;
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -769,6 +800,18 @@ function SalonInventarioModal({
         }
       }
 
+      // Extra rows (pre-existing stock) → always positive transfers
+      for (const r of validExtraRows) {
+        transferInserts.push({
+          salon_id: salonId,
+          produto_id: r.produto_id,
+          quantidade: parseInt(r.quantidade),
+          data: dataInv,
+          nota: "Stock inicial registado em inventário",
+          representante_id: session?.user?.id ?? null,
+        });
+      }
+
       if (transferInserts.length > 0) {
         const { error } = await supabase.from("transfers").insert(transferInserts);
         if (error) throw error;
@@ -796,7 +839,7 @@ function SalonInventarioModal({
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["saloes"] });
-      toast.success(`Inventário concluído! ${comDiferenca.length} ajuste(s) criado(s).`);
+      toast.success(`Inventário concluído! ${totalAjustes} ajuste(s) criado(s).`);
       onClose();
     },
     onError: (e: any) => toast.error("Erro ao confirmar inventário", { description: e.message }),
@@ -841,7 +884,7 @@ function SalonInventarioModal({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {visible.length === 0 && (
+              {visible.length === 0 && extraRows.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
                     {rows.length === 0 ? "Sem stock no salão para inventariar." : "Nenhum produto corresponde ao filtro."}
@@ -887,24 +930,92 @@ function SalonInventarioModal({
                   </TableRow>
                 );
               })}
+
+              {/* Extra rows — produtos pré-existentes */}
+              {extraRows.map((r) => {
+                const qty = parseInt(r.quantidade);
+                const diff = isNaN(qty) || !r.produto_id ? null : qty;
+                const usedIds = new Set([
+                  ...existingIds,
+                  ...extraRows.filter((x) => x.key !== r.key && x.produto_id).map((x) => x.produto_id),
+                ]);
+                const availableProducts = allProducts.filter((p) => !usedIds.has(p.id));
+                return (
+                  <TableRow key={r.key} className="bg-amber-50 dark:bg-amber-950/20">
+                    <TableCell>
+                      <ProductCombobox
+                        value={r.produto_id}
+                        onChange={(id) => setExtraRow(r.key, "produto_id", id)}
+                        products={availableProducts.map((p) => ({ id: p.id, nome: p.nome }))}
+                        placeholder="Seleccionar produto…"
+                      />
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground text-sm">0</TableCell>
+                    <TableCell className="text-right w-24">
+                      <Input
+                        type="number"
+                        min={1}
+                        value={r.quantidade}
+                        onChange={(e) => setExtraRow(r.key, "quantidade", e.target.value)}
+                        className="w-20 text-right h-8 focus-visible:ring-[#b8973a]"
+                        placeholder="Qtd"
+                      />
+                    </TableCell>
+                    <TableCell className="text-right font-semibold text-green-600">
+                      {diff !== null && diff > 0 ? `+${diff}` : "—"}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-amber-700 dark:text-amber-400">Stock inicial</span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                          onClick={() => removeExtraRow(r.key)}
+                        >
+                          ×
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
+
+          {/* Botão adicionar produto */}
+          <div className="px-2 py-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs border-dashed border-amber-400 text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/20"
+              onClick={addExtraRow}
+            >
+              <Plus className="h-3 w-3 mr-1" />
+              Adicionar produto não listado
+            </Button>
+          </div>
         </div>
 
         {/* Sticky footer */}
         <div className="border-t pt-3 mt-1 flex flex-wrap items-center justify-between gap-3">
           <div className="flex gap-4 text-sm text-muted-foreground">
-            <span>Produtos contados: <strong className="text-foreground">{rows.filter((r) => parseInt(r.stockReal) !== r.stockApp || !isNaN(parseInt(r.stockReal))).length} / {rows.length}</strong></span>
-            <span>Com diferença: <strong className={comDiferenca.length > 0 ? "text-orange-600" : "text-foreground"}>{comDiferenca.length}</strong></span>
+            <span>
+              Produtos contados:{" "}
+              <strong className="text-foreground">
+                {rows.filter((r) => !isNaN(parseInt(r.stockReal))).length + validExtraRows.length} / {rows.length + extraRows.length}
+              </strong>
+            </span>
+            <span>Com diferença: <strong className={totalAjustes > 0 ? "text-orange-600" : "text-foreground"}>{totalAjustes}</strong></span>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={onClose}>Cancelar</Button>
             <Button
               className="bg-[#b8973a] text-white hover:bg-[#a07d2e]"
               onClick={() => mutation.mutate()}
-              disabled={comDiferenca.length === 0 || mutation.isPending}
+              disabled={totalAjustes === 0 || mutation.isPending}
             >
-              {mutation.isPending ? "A guardar…" : `Confirmar Inventário (${comDiferenca.length})`}
+              {mutation.isPending ? "A guardar…" : `Confirmar Inventário (${totalAjustes})`}
             </Button>
           </div>
         </div>
@@ -1266,6 +1377,7 @@ function SalonSheet({
         salonStock={salonStock}
         prodMap={d.prodMap}
         prodPrecoMap={d.prodPrecoMap}
+        allProducts={Array.from(d.prodMap.entries()).map(([id, nome]) => ({ id, nome }))}
       />
     </>
   );
