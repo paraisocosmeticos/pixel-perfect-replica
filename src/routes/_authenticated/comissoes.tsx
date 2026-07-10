@@ -86,6 +86,8 @@ type RepCommRow = {
   comissaoSalao: number;
   comissaoDireta: number;
   comissaoTotal: number;
+  valorPago: number;
+  pendente: number;
   pago: boolean;
 };
 
@@ -97,30 +99,27 @@ async function fetchComissoesData() {
     { data: salonRepSales },
     { data: directSales },
     { data: salons },
-    { data: roles },
+    { data: repsRaw },
     { data: payments },
   ] = await Promise.all([
     supabase.from("salon_sales").select("salon_id,data,preco_final,comissao_salao"),
     supabase.from("salon_sales").select("representante_id,salon_id,data,comissao_rep,preco_final"),
     supabase.from("rep_direct_sales").select("representante_id,data,preco_final,comissao_rep"),
     supabase.from("salons").select("id,nome").eq("ativo", true),
-    supabase.from("user_roles").select("user_id").eq("role", "representante"),
+    (supabase as any).rpc("get_representantes"),
     supabase.from("commission_payments").select("*").order("created_at", { ascending: false }),
   ]);
 
-  const repIds = (roles ?? []).map((r: any) => r.user_id);
-  const { data: profiles } = repIds.length
-    ? await supabase.from("profiles").select("id,nome").in("id", repIds)
-    : { data: [] };
-
   const salonMap = new Map((salons ?? []).map((s: any) => [s.id, s.nome]));
-  const repMap = new Map((profiles ?? []).map((p: any) => [p.id, p.nome]));
+  const repMap = new Map((repsRaw ?? []).map((p: any) => [p.id, p.nome]));
 
-  const paymentSet = new Set(
-    (payments ?? [])
-      .filter((p: CommissionPayment) => p.status === "pago")
-      .map((p: CommissionPayment) => `${p.destinatario_tipo}:${p.destinatario_id}:${p.periodo}`),
-  );
+  // paid amounts per key: "tipo:id:periodo" → total paid
+  const paidAmountMap = new Map<string, number>();
+  for (const p of (payments ?? []) as CommissionPayment[]) {
+    if (p.status !== "pago") continue;
+    const k = `${p.destinatario_tipo}:${p.destinatario_id}:${p.periodo ?? ""}`;
+    paidAmountMap.set(k, (paidAmountMap.get(k) ?? 0) + Number(p.valor));
+  }
 
   // ── Build salon commission rows ──
   const salonAgg = new Map<string, { vendas: number; comissao: number }>();
@@ -135,6 +134,7 @@ async function fetchComissoesData() {
 
   const salonRows: SalonCommRow[] = Array.from(salonAgg.entries()).map(([key, val]) => {
     const [salon_id, periodo] = key.split(/:(.+)/);
+    const valorPago = paidAmountMap.get(`salao:${salon_id}:${periodo}`) ?? 0;
     return {
       key,
       salon_id,
@@ -142,7 +142,7 @@ async function fetchComissoesData() {
       periodo,
       vendas: val.vendas,
       comissao: val.comissao,
-      pago: paymentSet.has(`salao:${salon_id}:${periodo}`),
+      pago: valorPago >= val.comissao - 0.01,
     };
   }).sort((a, b) => b.periodo.localeCompare(a.periodo));
 
@@ -160,6 +160,7 @@ async function fetchComissoesData() {
   }
 
   for (const s of (directSales ?? []) as DirectSale[]) {
+    if (!s.representante_id) continue;
     const periodo = s.data.slice(0, 7);
     const key = `${s.representante_id}:${periodo}`;
     const cur = repAgg.get(key) ?? { vendasSalao: 0, vendasDiretas: 0, comissaoSalao: 0, comissaoDireta: 0 };
@@ -170,6 +171,9 @@ async function fetchComissoesData() {
 
   const repRows: RepCommRow[] = Array.from(repAgg.entries()).map(([key, val]) => {
     const [rep_id, periodo] = key.split(/:(.+)/);
+    const total = val.comissaoSalao + val.comissaoDireta;
+    const valorPago = paidAmountMap.get(`representante:${rep_id}:${periodo}`) ?? 0;
+    const pendente = Math.max(0, total - valorPago);
     return {
       key,
       rep_id,
@@ -179,19 +183,20 @@ async function fetchComissoesData() {
       vendasDiretas: val.vendasDiretas,
       comissaoSalao: val.comissaoSalao,
       comissaoDireta: val.comissaoDireta,
-      comissaoTotal: val.comissaoSalao + val.comissaoDireta,
-      pago: paymentSet.has(`representante:${rep_id}:${periodo}`),
+      comissaoTotal: total,
+      valorPago,
+      pendente,
+      pago: pendente < 0.01,
     };
   }).sort((a, b) => b.periodo.localeCompare(a.periodo));
 
   // KPIs
   const pendenteSaloes = salonRows.filter((r) => !r.pago).reduce((s, r) => s + r.comissao, 0);
-  const pendenteReps = repRows.filter((r) => !r.pago).reduce((s, r) => s + r.comissaoTotal, 0);
+  const pendenteReps = repRows.reduce((s, r) => s + r.pendente, 0);
   const pagoEsteMes = (payments ?? [])
     .filter((p: CommissionPayment) => p.status === "pago" && p.data_pagamento && p.data_pagamento >= monthStart)
     .reduce((s: number, p: CommissionPayment) => s + Number(p.valor), 0);
 
-  // History
   const historyMonths = Array.from(
     new Set((payments ?? []).map((p: CommissionPayment) => (p.data_pagamento ?? p.created_at).slice(0, 7))),
   ).sort((a, b) => b.localeCompare(a));
@@ -309,7 +314,7 @@ function ComissoesPage() {
           ? salonRows.find((r) => r.key === k)
           : repRows.find((r) => r.key === k);
         const id = tipo === "salao" ? (row as SalonCommRow)?.salon_id : (row as RepCommRow)?.rep_id;
-        const valor = tipo === "salao" ? (row as SalonCommRow)?.comissao : (row as RepCommRow)?.comissaoTotal;
+        const valor = tipo === "salao" ? (row as SalonCommRow)?.comissao : (row as RepCommRow)?.pendente;
         return {
           destinatario_id: id,
           destinatario_tipo: tipo,
@@ -476,17 +481,21 @@ function ComissoesPage() {
                   <TableHead className="text-primary-foreground">Período</TableHead>
                   <TableHead className="text-primary-foreground text-right">Vnd. Salões</TableHead>
                   <TableHead className="text-primary-foreground text-right">Vnd. Directas</TableHead>
-                  <TableHead className="text-primary-foreground text-right">Comissão Total</TableHead>
+                  <TableHead className="text-primary-foreground text-right">Com. Salões</TableHead>
+                  <TableHead className="text-primary-foreground text-right">Com. Directas</TableHead>
+                  <TableHead className="text-primary-foreground text-right">Total</TableHead>
+                  <TableHead className="text-primary-foreground text-right">Pago</TableHead>
+                  <TableHead className="text-primary-foreground text-right">Pendente</TableHead>
                   <TableHead className="text-primary-foreground text-center">Status</TableHead>
                   <TableHead className="text-primary-foreground"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading && (
-                  <TableRow><TableCell colSpan={8} className="text-center py-10 text-muted-foreground">A carregar…</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={11} className="text-center py-10 text-muted-foreground">A carregar…</TableCell></TableRow>
                 )}
                 {!isLoading && repRows.length === 0 && (
-                  <TableRow><TableCell colSpan={8} className="text-center py-10 text-muted-foreground">Sem comissões calculadas.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={11} className="text-center py-10 text-muted-foreground">Sem comissões calculadas.</TableCell></TableRow>
                 )}
                 {repRows.map((r) => (
                   <TableRow key={r.key} className={r.pago ? "opacity-60" : ""}>
@@ -502,7 +511,11 @@ function ComissoesPage() {
                     <TableCell className="text-muted-foreground">{periodoLabel(r.periodo)}</TableCell>
                     <TableCell className="text-right">{eur(r.vendasSalao)}</TableCell>
                     <TableCell className="text-right">{eur(r.vendasDiretas)}</TableCell>
+                    <TableCell className="text-right">{eur(r.comissaoSalao)}</TableCell>
+                    <TableCell className="text-right">{eur(r.comissaoDireta)}</TableCell>
                     <TableCell className="text-right font-semibold">{eur(r.comissaoTotal)}</TableCell>
+                    <TableCell className="text-right text-green-600">{r.valorPago > 0 ? eur(r.valorPago) : "—"}</TableCell>
+                    <TableCell className="text-right font-semibold text-orange-600">{r.pendente > 0 ? eur(r.pendente) : "—"}</TableCell>
                     <TableCell className="text-center">
                       {r.pago
                         ? <Badge className="bg-green-600 text-white hover:bg-green-600">Pago</Badge>
@@ -512,7 +525,7 @@ function ComissoesPage() {
                       {!r.pago && (
                         <Button
                           size="sm" variant="outline"
-                          onClick={() => setPayTarget({ destinatario_id: r.rep_id, destinatario_tipo: "representante", nome: r.repNome, periodo: r.periodo, valor: r.comissaoTotal })}
+                          onClick={() => setPayTarget({ destinatario_id: r.rep_id, destinatario_tipo: "representante", nome: r.repNome, periodo: r.periodo, valor: r.pendente })}
                         >
                           Pagar
                         </Button>
