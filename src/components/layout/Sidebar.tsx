@@ -38,6 +38,11 @@ const nav: NavItem[] = [
   { to: "/configuracoes", label: "Configurações", icon: Settings, adminOnly: true },
 ];
 
+const navSalao: NavItem[] = [
+  { to: "/dashboard-salao", label: "O Meu Salão", icon: LayoutDashboard },
+  { to: "/vendas", label: "Vendas", icon: Receipt },
+];
+
 export function Sidebar({
   user,
   mobileOpen,
@@ -51,7 +56,9 @@ export function Sidebar({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const items = nav.filter((i) => !i.adminOnly || user?.role === "admin");
+  const items = user?.role === "salao"
+    ? navSalao
+    : nav.filter((i) => !i.adminOnly || user?.role === "admin");
 
   async function handleSignOut() {
     await queryClient.cancelQueries();

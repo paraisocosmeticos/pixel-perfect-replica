@@ -22,14 +22,16 @@ export const Route = createFileRoute("/_authenticated/configuracoes")({
 
 type UserRow = { id: string; nome: string; email: string; role: string; created_at: string };
 type Cycle = { id: string; nome: string; numero_ciclo: number | null; data_inicio: string | null; data_fim: string | null; ativo: boolean };
+type SalonOption = { id: string; nome: string };
 
 function fmtDate(s: string) { return new Date(s).toLocaleDateString("pt-PT"); }
 
 async function fetchConfigData() {
-  const [{ data: profiles }, { data: roles }, { data: cycles }] = await Promise.all([
+  const [{ data: profiles }, { data: roles }, { data: cycles }, { data: salons }] = await Promise.all([
     supabase.from("profiles").select("id,nome,email,created_at").order("nome"),
     supabase.from("user_roles").select("user_id,role"),
     supabase.from("boticario_cycles").select("*").order("created_at", { ascending: false }),
+    supabase.from("salons").select("id,nome").eq("ativo", true).order("nome"),
   ]);
 
   const roleMap = new Map((roles ?? []).map((r: any) => [r.user_id, r.role]));
@@ -41,21 +43,29 @@ async function fetchConfigData() {
     created_at: p.created_at,
   }));
 
-  return { users, cycles: (cycles ?? []) as Cycle[] };
+  return { users, cycles: (cycles ?? []) as Cycle[], salons: (salons ?? []) as SalonOption[] };
 }
 
 // ── Change Role Modal ─────────────────────────────────────────────────────────
 function ChangeRoleModal({
   user,
   onClose,
+  salons,
 }: {
   user: UserRow | null;
   onClose: () => void;
+  salons: SalonOption[];
 }) {
   const qc = useQueryClient();
-  const [role, setRole] = useState<"admin" | "representante">("representante");
+  const [role, setRole] = useState<"admin" | "representante" | "salao">("representante");
+  const [salonId, setSalonId] = useState("");
 
-  useEffect(() => { if (user) setRole(user.role as any); }, [user]);
+  useEffect(() => {
+    if (user) {
+      setRole(user.role as any);
+      setSalonId("");
+    }
+  }, [user]);
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -64,6 +74,14 @@ function ChangeRoleModal({
         .update({ role })
         .eq("user_id", user!.id);
       if (error) throw error;
+
+      if (role === "salao" && salonId) {
+        // Upsert salao_users link
+        const { error: e2 } = await (supabase as any)
+          .from("salao_users")
+          .upsert({ user_id: user!.id, salon_id: salonId }, { onConflict: "user_id,salon_id" });
+        if (e2) throw e2;
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["config"] });
@@ -72,6 +90,8 @@ function ChangeRoleModal({
     },
     onError: (e: any) => toast.error("Erro", { description: e.message }),
   });
+
+  const canSave = role !== "salao" || !!salonId;
 
   return (
     <Dialog open={!!user} onOpenChange={(v) => !v && onClose()}>
@@ -83,12 +103,28 @@ function ChangeRoleModal({
             <SelectContent>
               <SelectItem value="admin">Admin</SelectItem>
               <SelectItem value="representante">Representante</SelectItem>
+              <SelectItem value="salao">Salão</SelectItem>
             </SelectContent>
           </Select>
+          {role === "salao" && (
+            <div className="space-y-1">
+              <Label>Salão associado <span className="text-red-500">*</span></Label>
+              <Select value={salonId} onValueChange={setSalonId}>
+                <SelectTrigger><SelectValue placeholder="Seleccionar salão…" /></SelectTrigger>
+                <SelectContent>
+                  {salons.map((s) => <SelectItem key={s.id} value={s.id}>{s.nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button className="bg-accent text-accent-foreground hover:bg-accent/90" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
+          <Button
+            className="bg-accent text-accent-foreground hover:bg-accent/90"
+            onClick={() => mutation.mutate()}
+            disabled={!canSave || mutation.isPending}
+          >
             Guardar
           </Button>
         </DialogFooter>
@@ -97,16 +133,48 @@ function ChangeRoleModal({
   );
 }
 
-// ── Nova Rep Instrução Modal ──────────────────────────────────────────────────
-function NovaRepModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+// ── Novo Utilizador Instrução Modal ──────────────────────────────────────────
+function NovaRepModal({
+  open,
+  onClose,
+  salons,
+}: {
+  open: boolean;
+  onClose: () => void;
+  salons: SalonOption[];
+}) {
   const [email, setEmail] = useState("");
   const [nome, setNome] = useState("");
-  useEffect(() => { if (open) { setEmail(""); setNome(""); } }, [open]);
+  const [role, setRole] = useState<"representante" | "salao">("representante");
+  const [salonId, setSalonId] = useState("");
+  const salonNome = salons.find((s) => s.id === salonId)?.nome ?? "";
+
+  useEffect(() => {
+    if (open) { setEmail(""); setNome(""); setRole("representante"); setSalonId(""); }
+  }, [open]);
+
+  const sqlSnippet = role === "representante"
+    ? `-- Adicionar role representante para ${nome || email}
+UPDATE public.user_roles
+SET role = 'representante'
+WHERE user_id = (
+  SELECT id FROM auth.users WHERE email = '${email}'
+);`
+    : `-- Adicionar role salao e ligar ao salão "${salonNome}"
+UPDATE public.user_roles
+SET role = 'salao'
+WHERE user_id = (
+  SELECT id FROM auth.users WHERE email = '${email}'
+);
+
+INSERT INTO public.salao_users (user_id, salon_id)
+SELECT id, '${salonId}'
+FROM auth.users WHERE email = '${email}';`;
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle>Adicionar Nova Representante</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Adicionar Novo Utilizador</DialogTitle></DialogHeader>
         <div className="space-y-4 py-2">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
@@ -118,7 +186,28 @@ function NovaRepModal({ open, onClose }: { open: boolean; onClose: () => void })
               <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@exemplo.com" />
             </div>
           </div>
-          {email && (
+          <div className="space-y-1">
+            <Label>Tipo de conta</Label>
+            <Select value={role} onValueChange={(v) => setRole(v as any)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="representante">Representante</SelectItem>
+                <SelectItem value="salao">Salão (dona)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {role === "salao" && (
+            <div className="space-y-1">
+              <Label>Salão associado <span className="text-red-500">*</span></Label>
+              <Select value={salonId} onValueChange={setSalonId}>
+                <SelectTrigger><SelectValue placeholder="Seleccionar salão…" /></SelectTrigger>
+                <SelectContent>
+                  {salons.map((s) => <SelectItem key={s.id} value={s.id}>{s.nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {email && (role === "representante" || (role === "salao" && salonId)) && (
             <div className="rounded-md bg-muted p-4 space-y-3 text-sm">
               <p className="font-semibold flex items-center gap-2"><Settings className="h-4 w-4" /> Passos para criar a conta:</p>
               <ol className="list-decimal list-inside space-y-2 text-muted-foreground">
@@ -126,16 +215,7 @@ function NovaRepModal({ open, onClose }: { open: boolean; onClose: () => void })
                 <li>Email: <span className="font-mono text-foreground bg-background rounded px-1">{email}</span> · Auto Confirm: <strong>ON</strong></li>
                 <li>Após criado, executa no <strong>SQL Editor</strong>:</li>
               </ol>
-              <pre className="bg-background rounded-md p-3 text-xs overflow-x-auto border">{`-- Adicionar role representante para ${nome || email}
-UPDATE public.user_roles
-SET role = 'representante'
-WHERE user_id = (
-  SELECT id FROM auth.users
-  WHERE email = '${email}'
-);`}</pre>
-              <ol className="list-decimal list-inside space-y-1 text-muted-foreground" start={4}>
-                <li>Vai a <strong>Salões</strong> → editar salão → atribui a representante</li>
-              </ol>
+              <pre className="bg-background rounded-md p-3 text-xs overflow-x-auto border">{sqlSnippet}</pre>
             </div>
           )}
         </div>
@@ -447,7 +527,7 @@ function ConfiguracoesPage() {
           <div className="flex items-center justify-between">
             <h2 className="font-display font-semibold text-lg">Utilizadores da Plataforma</h2>
             <Button className="bg-accent text-accent-foreground hover:bg-accent/90" size="sm" onClick={() => setNovaRepOpen(true)}>
-              <Plus className="h-3.5 w-3.5 mr-1" /> Nova Representante
+              <Plus className="h-3.5 w-3.5 mr-1" /> Novo Utilizador
             </Button>
           </div>
           <Card className="overflow-hidden">
@@ -472,6 +552,8 @@ function ConfiguracoesPage() {
                     <TableCell>
                       {u.role === "admin"
                         ? <Badge className="bg-accent text-accent-foreground hover:bg-accent">Admin</Badge>
+                        : u.role === "salao"
+                        ? <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">Salão</Badge>
                         : <Badge variant="secondary">Representante</Badge>}
                     </TableCell>
                     <TableCell className="text-muted-foreground">{fmtDate(u.created_at)}</TableCell>
@@ -569,8 +651,8 @@ function ConfiguracoesPage() {
         </TabsContent>
       </Tabs>
 
-      <ChangeRoleModal user={changeRoleUser} onClose={() => setChangeRoleUser(null)} />
-      <NovaRepModal open={novaRepOpen} onClose={() => setNovaRepOpen(false)} />
+      <ChangeRoleModal user={changeRoleUser} onClose={() => setChangeRoleUser(null)} salons={data?.salons ?? []} />
+      <NovaRepModal open={novaRepOpen} onClose={() => setNovaRepOpen(false)} salons={data?.salons ?? []} />
       <NovoCicloModal open={novoCicloOpen} onClose={() => setNovoCicloOpen(false)} />
       <ImportacaoModal open={importOpen} onClose={() => setImportOpen(false)} />
     </div>

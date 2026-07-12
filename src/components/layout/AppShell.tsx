@@ -7,7 +7,9 @@ export type CurrentUser = {
   id: string;
   email: string;
   nome: string;
-  role: "admin" | "representante";
+  role: "admin" | "representante" | "salao";
+  salonId?: string;
+  salonNome?: string;
 };
 
 async function fetchCurrentUser(): Promise<CurrentUser | null> {
@@ -34,15 +36,32 @@ async function fetchCurrentUser(): Promise<CurrentUser | null> {
     console.log('NO ROLES for user_id', session.user.id, '(auto-signOut disabled for debug)');
   }
 
-  const role = roles.some((r) => r.role === "admin")
+  const roleStr = roles?.find((r) => r.role === "admin")
     ? "admin"
-    : "representante" as "admin" | "representante";
-  console.log('FETCH ROLE RESULT:', role, roles);
+    : roles?.find((r) => r.role === "salao")
+    ? "salao"
+    : "representante";
+
+  let salonId: string | undefined;
+  let salonNome: string | undefined;
+  if (roleStr === "salao") {
+    const { data: salaoLink } = await (supabase as any)
+      .from("salao_users")
+      .select("salon_id, salons(nome)")
+      .eq("user_id", session.user.id)
+      .maybeSingle();
+    salonId = salaoLink?.salon_id ?? undefined;
+    salonNome = salaoLink?.salons?.nome ?? undefined;
+  }
+
+  console.log('FETCH ROLE RESULT:', roleStr, roles);
   return {
     id: session.user.id,
     email: profile?.email ?? session.user.email ?? "",
-    nome: profile?.nome ?? session.user.email?.split("@")[0] ?? "Utilizador",
-    role,
+    nome: salonNome ?? profile?.nome ?? session.user.email?.split("@")[0] ?? "Utilizador",
+    role: roleStr as "admin" | "representante" | "salao",
+    salonId,
+    salonNome,
   };
 }
 

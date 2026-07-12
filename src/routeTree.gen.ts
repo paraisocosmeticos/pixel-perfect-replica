@@ -24,6 +24,7 @@ import { Route as AuthenticatedConfiguracoesRouteImport } from './routes/_authen
 import { Route as AuthenticatedComprasRouteImport } from './routes/_authenticated/compras'
 import { Route as AuthenticatedEncomendasRouteImport } from './routes/_authenticated/encomendas'
 import { Route as AuthenticatedComissoesRouteImport } from './routes/_authenticated/comissoes'
+import { Route as AuthenticatedDashboardSalaoRouteImport } from './routes/_authenticated/dashboard-salao'
 
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
@@ -101,11 +102,17 @@ const AuthenticatedComissoesRoute = AuthenticatedComissoesRouteImport.update({
   path: '/comissoes',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedDashboardSalaoRoute = AuthenticatedDashboardSalaoRouteImport.update({
+  id: '/dashboard-salao',
+  path: '/dashboard-salao',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/comissoes': typeof AuthenticatedComissoesRoute
+  '/dashboard-salao': typeof AuthenticatedDashboardSalaoRoute
   '/encomendas': typeof AuthenticatedEncomendasRoute
   '/compras': typeof AuthenticatedComprasRoute
   '/configuracoes': typeof AuthenticatedConfiguracoesRoute
@@ -122,6 +129,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/comissoes': typeof AuthenticatedComissoesRoute
+  '/dashboard-salao': typeof AuthenticatedDashboardSalaoRoute
   '/encomendas': typeof AuthenticatedEncomendasRoute
   '/compras': typeof AuthenticatedComprasRoute
   '/configuracoes': typeof AuthenticatedConfiguracoesRoute
@@ -140,6 +148,7 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/_authenticated/comissoes': typeof AuthenticatedComissoesRoute
+  '/_authenticated/dashboard-salao': typeof AuthenticatedDashboardSalaoRoute
   '/_authenticated/encomendas': typeof AuthenticatedEncomendasRoute
   '/_authenticated/compras': typeof AuthenticatedComprasRoute
   '/_authenticated/configuracoes': typeof AuthenticatedConfiguracoesRoute
@@ -158,6 +167,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/comissoes'
+    | '/dashboard-salao'
     | '/encomendas'
     | '/compras'
     | '/configuracoes'
@@ -174,6 +184,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/comissoes'
+    | '/dashboard-salao'
     | '/encomendas'
     | '/compras'
     | '/configuracoes'
@@ -191,6 +202,7 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/auth'
     | '/_authenticated/comissoes'
+    | '/_authenticated/dashboard-salao'
     | '/_authenticated/encomendas'
     | '/_authenticated/compras'
     | '/_authenticated/configuracoes'
@@ -310,6 +322,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedComissoesRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/dashboard-salao': {
+      id: '/_authenticated/dashboard-salao'
+      path: '/dashboard-salao'
+      fullPath: '/dashboard-salao'
+      preLoaderRoute: typeof AuthenticatedDashboardSalaoRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/encomendas': {
       id: '/_authenticated/encomendas'
       path: '/encomendas'
@@ -322,6 +341,7 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedComissoesRoute: typeof AuthenticatedComissoesRoute
+  AuthenticatedDashboardSalaoRoute: typeof AuthenticatedDashboardSalaoRoute
   AuthenticatedEncomendasRoute: typeof AuthenticatedEncomendasRoute
   AuthenticatedComprasRoute: typeof AuthenticatedComprasRoute
   AuthenticatedConfiguracoesRoute: typeof AuthenticatedConfiguracoesRoute
@@ -337,6 +357,7 @@ interface AuthenticatedRouteRouteChildren {
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedComissoesRoute: AuthenticatedComissoesRoute,
+  AuthenticatedDashboardSalaoRoute: AuthenticatedDashboardSalaoRoute,
   AuthenticatedEncomendasRoute: AuthenticatedEncomendasRoute,
   AuthenticatedComprasRoute: AuthenticatedComprasRoute,
   AuthenticatedConfiguracoesRoute: AuthenticatedConfiguracoesRoute,
