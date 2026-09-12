@@ -427,6 +427,124 @@ function DevolucaoModal({
   );
 }
 
+// ── Venda Rápida Modal ────────────────────────────────────────────────────────
+type VendaRapidaProduto = { produto_id: string; nome: string; qtyDisponivel: number; precoBase: number };
+
+function VendaRapidaModal({
+  open,
+  onClose,
+  salonId,
+  produto,
+}: {
+  open: boolean;
+  onClose: () => void;
+  salonId: string;
+  produto: VendaRapidaProduto | null;
+}) {
+  const qc = useQueryClient();
+  const [quantidade, setQuantidade] = useState(1);
+  const [preco, setPreco] = useState(0);
+  const [cliente, setCliente] = useState("");
+
+  useEffect(() => {
+    if (open && produto) {
+      setQuantidade(1);
+      setPreco(produto.precoBase);
+      setCliente("");
+    }
+  }, [open, produto]);
+
+  const qtdInvalid = !produto || quantidade < 1 || quantidade > produto.qtyDisponivel;
+  const precoInvalid = preco < 0;
+  const total = quantidade * preco;
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      if (!produto) return;
+      const { data, error } = await supabase
+        .from("salon_sales")
+        .insert({
+          salon_id: salonId,
+          produto_id: produto.produto_id,
+          quantidade,
+          preco_venda: preco,
+          data: new Date().toISOString().slice(0, 10),
+          cliente_nome: cliente.trim() || null,
+        })
+        .select("comissao_salao")
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ["saloes"] });
+      qc.invalidateQueries({ queryKey: ["stock-central"] });
+      toast.success(`Venda registada! Comissão: ${eur(Number(data?.comissao_salao ?? 0))}`);
+      onClose();
+    },
+    onError: (e: any) => toast.error("Erro", { description: e.message }),
+  });
+
+  if (!produto) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader><DialogTitle>💰 Venda Rápida</DialogTitle></DialogHeader>
+        <div className="space-y-3 py-1">
+          <div className="space-y-1">
+            <Label>Produto</Label>
+            <Input value={produto.nome} readOnly disabled className="bg-muted" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>Quantidade</Label>
+              <Input
+                type="number"
+                min={1}
+                max={produto.qtyDisponivel}
+                value={quantidade}
+                onChange={(e) => setQuantidade(parseInt(e.target.value) || 0)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>Preço Venda (€)</Label>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={preco}
+                onChange={(e) => setPreco(parseFloat(e.target.value) || 0)}
+              />
+            </div>
+          </div>
+          {qtdInvalid && (
+            <p className="text-xs text-red-500">Quantidade deve ser entre 1 e {produto.qtyDisponivel} (disponível no salão).</p>
+          )}
+          <div className="space-y-1">
+            <Label>Cliente <span className="text-muted-foreground">(opcional)</span></Label>
+            <Input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nome do cliente" />
+          </div>
+          <div className="rounded-lg bg-green-50 dark:bg-green-950/20 px-4 py-3 flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">Preço total</span>
+            <span className="text-xl font-bold text-green-600">{eur(total)}</span>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button
+            className="bg-[#b8973a] text-white hover:bg-[#a07d2e]"
+            onClick={() => mutation.mutate()}
+            disabled={qtdInvalid || precoInvalid || mutation.isPending}
+          >
+            {mutation.isPending ? "A registar…" : "Confirmar Venda"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Salon Modal (create/edit) ─────────────────────────────────────────────────
 function SalonModal({
   open,
@@ -1043,6 +1161,7 @@ function SalonSheet({
   const [devolucaoOpen, setDevolucaoOpen] = useState(false);
   const [fiadoOpen, setFiadoOpen] = useState(false);
   const [inventarioOpen, setInventarioOpen] = useState(false);
+  const [vendaRapida, setVendaRapida] = useState<VendaRapidaProduto | null>(null);
 
   // Fiado query — só corre para admin
   const { data: fiadoRows } = useQuery({
@@ -1182,6 +1301,7 @@ function SalonSheet({
                     <TableRow className="bg-primary hover:bg-primary">
                       <TableHead className="text-primary-foreground">Produto</TableHead>
                       <TableHead className="text-primary-foreground text-right">Qtd em Salão</TableHead>
+                      <TableHead className="text-primary-foreground text-right"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1190,6 +1310,22 @@ function SalonSheet({
                         <TableCell className="font-medium">{d.prodMap.get(produto_id) ?? produto_id}</TableCell>
                         <TableCell className={`text-right font-semibold ${qty < 0 ? "text-red-500" : ""}`}>
                           {qty}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {qty > 0 && (
+                            <Button
+                              size="sm"
+                              className="h-7 text-xs bg-[#b8973a] text-white hover:bg-[#a07d2e]"
+                              onClick={() => setVendaRapida({
+                                produto_id,
+                                nome: d.prodMap.get(produto_id) ?? produto_id,
+                                qtyDisponivel: qty,
+                                precoBase: d.prodPrecoMap.get(produto_id) ?? 0,
+                              })}
+                            >
+                              💰 Vender
+                            </Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1369,6 +1505,7 @@ function SalonSheet({
       <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} salonId={salon.id} />
       <DevolucaoModal open={devolucaoOpen} onClose={() => setDevolucaoOpen(false)} salonId={salon.id} salonStock={salonStock} prodMap={d.prodMap} />
       {isAdmin && <FiadoModal open={fiadoOpen} onClose={() => setFiadoOpen(false)} salonId={salon.id} />}
+      <VendaRapidaModal open={!!vendaRapida} onClose={() => setVendaRapida(null)} salonId={salon.id} produto={vendaRapida} />
       <SalonInventarioModal
         open={inventarioOpen}
         onClose={() => setInventarioOpen(false)}
