@@ -10,7 +10,7 @@ import { Modal } from '../../components/ui/Modal'
 import { LoadingSpinner } from '../../components/shared/LoadingSpinner'
 import { useToast } from '../../components/ui/Toast'
 import { daysSince, formatCurrency } from '../../lib/utils'
-import { CheckCircle, ChevronLeft } from 'lucide-react'
+import { CheckCircle, ChevronLeft, Search, X } from 'lucide-react'
 
 export default function ComercialSaloes() {
   const { profile } = useAuth()
@@ -22,6 +22,7 @@ export default function ComercialSaloes() {
   const [saleForm, setSaleForm] = useState({ product_id: '', quantity: 1, sale_price: 0 })
   const [saleModal, setSaleModal] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [stockSearch, setStockSearch] = useState('')
   const { showToast, ToastComponent } = useToast()
 
   useEffect(() => {
@@ -41,6 +42,7 @@ export default function ComercialSaloes() {
 
   const openDetail = async (r: any) => {
     setSelected(r)
+    setStockSearch('')
     const [{ data: stock }, { data: hist }] = await Promise.all([
       supabase.from('reseller_stock').select('*, products(name)').eq('reseller_id', r.id).gt('quantity', 0),
       supabase.from('reseller_sales').select('*, products(name)').eq('reseller_id', r.id).order('date', { ascending: false }).limit(10),
@@ -117,19 +119,61 @@ export default function ComercialSaloes() {
 
         {/* Stock */}
         <Card>
-          <h3 className="font-semibold text-[#1a3a2a] mb-3">Stock no Salão</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-[#1a3a2a]">Stock no Salão</h3>
+            {stockItems.length > 0 && (
+              <span className="text-xs text-gray-400">
+                {stockSearch
+                  ? `${stockItems.filter(s => s.products?.name?.toLowerCase().includes(stockSearch.toLowerCase())).length} de ${stockItems.length} produtos`
+                  : `${stockItems.length} produto${stockItems.length !== 1 ? 's' : ''}`}
+              </span>
+            )}
+          </div>
+
+          {stockItems.length > 0 && (
+            <div className="relative mb-3">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              <input
+                value={stockSearch}
+                onChange={(e) => setStockSearch(e.target.value)}
+                placeholder="Pesquisar produto..."
+                className="w-full pl-8 pr-8 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#b8973a] focus:border-transparent"
+              />
+              {stockSearch && (
+                <button
+                  onClick={() => setStockSearch('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          )}
+
           {stockItems.length === 0 ? (
             <p className="text-sm text-gray-400">Sem stock registado</p>
-          ) : (
-            <ul className="space-y-2">
-              {stockItems.map((s) => (
-                <li key={s.id} className="flex justify-between text-sm">
-                  <span>{s.products?.name}</span>
-                  <Badge variant={s.quantity < 3 ? 'red' : 'green'}>{s.quantity} un.</Badge>
-                </li>
-              ))}
-            </ul>
-          )}
+          ) : (() => {
+            const stockFiltrado = stockItems.filter(s =>
+              s.products?.name?.toLowerCase().includes(stockSearch.toLowerCase())
+            )
+            if (stockFiltrado.length === 0) {
+              return (
+                <p className="text-sm text-gray-400 py-2">
+                  Nenhum produto encontrado para &ldquo;{stockSearch}&rdquo;
+                </p>
+              )
+            }
+            return (
+              <ul className="space-y-2">
+                {stockFiltrado.map((s) => (
+                  <li key={s.id} className="flex justify-between text-sm">
+                    <span>{s.products?.name}</span>
+                    <Badge variant={s.quantity < 3 ? 'red' : 'green'}>{s.quantity} un.</Badge>
+                  </li>
+                ))}
+              </ul>
+            )
+          })()}
         </Card>
 
         {/* History */}
